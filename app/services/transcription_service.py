@@ -73,10 +73,10 @@ def request_openai_transcription(audio_file, filename, timeout=60):
     }
     try:
         return requests.post(
-            "https://api.boondock.cloud/api/v1/transcribe/openai",
+            "https://api.boondock.cloud/api/v3/transcribe/openai",
             headers=headers,
             files={"audio_file": (filename, audio_file, "audio/wav")},
-            data={"model_id": "scribe_v1"},
+            data={"model_id": "whisper-large-v3-turbo"},
             timeout=timeout,
         )
     except requests.exceptions.Timeout as exc:
