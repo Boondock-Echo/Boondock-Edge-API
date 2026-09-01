@@ -376,68 +376,6 @@ LOG_TYPES = {
     'app': 'app'
 }
 
-def get_log_path(log_type, date=None):
-    """
-    Get the log file path for a specific date.
-    
-    DEPRECATED: This function is kept for backward compatibility only.
-    All logs are now stored in logs.db database. Use DatabaseLoggingManager instead.
-    
-    Args:
-        log_type (str): Type of log (error, warning, transcription, database, event, app)
-        date (str): Date in YYYY-MM-DD format. If None, uses current date.
-    
-    Returns:
-        Path: Path to the log file (legacy file-based logging)
-    """
-    if date is None:
-        date = datetime.now().date()
-    elif isinstance(date, str):
-        date = datetime.strptime(date, '%Y-%m-%d').date()
-    
-    year = date.strftime('%Y')
-    month = date.strftime('%m')
-    date_str = date.strftime('%Y-%m-%d')
-    
-    log_dir = DATA_ROOT / 'logs' / year / month
-    log_file = log_dir / f'{date_str}_{LOG_TYPES.get(log_type, "app")}.log'
-    
-    return log_file
-
-def parse_log_line(line):
-    """
-    Parse a log line from a file.
-    
-    DEPRECATED: This function is kept for backward compatibility only.
-    All logs are now stored in logs.db database. Use DatabaseLoggingManager instead.
-    
-    Args:
-        line (str): Log line to parse
-    
-    Returns:
-        dict: Parsed log entry or None if parsing fails
-    """
-    try:
-        # Expected format: '2024-01-07 10:30:45 - logger_name - LEVEL - Message'
-        parts = line.split(' - ', 3)
-        if len(parts) == 4:
-            timestamp_str, logger_name, level, message = parts
-            return {
-                'timestamp': timestamp_str.strip(),
-                'logger': logger_name.strip(),
-                'level': level.strip(),
-                'message': message.strip()
-            }
-    except Exception:
-        pass
-    return None
-
-def ensure_json_file(file_path):
-    """Ensure the JSON file exists with proper structure."""
-    if not file_path.exists():
-        with open(file_path, 'w') as f:
-            json.dump([], f)
-
 def load_settings():
     """Load settings from database."""
     try:

@@ -4,6 +4,7 @@ Monitors serial ports for devices flagged for monitoring and logs messages.
 
 Automated line format: see Device-Docs/DEVICE_SERIAL.md (ty: log, ready, config, short, health, event, info, error).
 """
+import os
 import json
 import logging
 import queue
@@ -1732,7 +1733,7 @@ def initialize_monitoring():
                 _save_inventory(devices)
             
             # Start monitoring
-            if start_monitoring_for_device(port):
+            if (not port.startswith("/dev/") or  os.path.exists(port)) and start_monitoring_for_device(port):
                 monitored_count += 1
                 _logger.info("Started monitoring for device on port %s", port)
             else:

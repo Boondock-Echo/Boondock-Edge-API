@@ -18,20 +18,10 @@ from app.services.audio_handler import get_audio_handler
 from app.utils.crc_utils import check_and_update_duplicate_cache
 from ..utils.logging_setup import error_logger
 from ..middleware.auth_middleware import require_auth, require_admin
-from ..utils.auth import (
-    load_tokens,
-    is_token_valid,
-    generate_token,
-    VALID_TOKENS,
-)
 from ..routes.route_utils import (
     RECORDINGS_DIR,
     DB_PATH,
-    get_channel_id_from_mac,
-    get_mac_from_channel_id,
-    create_channel_for_mac,
     get_channel_details,
-    allowed_file,
     get_timezone,
     convert_to_timezone,
     db_lock,
@@ -525,8 +515,48 @@ def get_recordings():
     return jsonify(audio_handler.get_all_recordings() if audio_handler else [])
 
 
-def _recordings_inbox_window_impl():
-    """Shared handler for /recordings/inbox and /recordings/inbox/range (chunked lazy loads)."""
+@recordings_bp.route('/recordings/inbox', methods=['GET'])
+@recordings_bp.route('/recordings/inbox/range', methods=['GET'])
+@swag_from({
+    'tags': ['Recordings'],
+    'summary': 'Retrieve inbox recordings',
+    'description': 'Get a bounded inbox window of recordings',
+    'parameters': [
+        {
+            'name': 'limit',
+            'in': 'query',
+            'type': 'integer',
+            'required': False,
+            'description': 'Maximum number of recordings to return (default 1000, max 5000)'
+        },
+        {
+            'name': 'since_timestamp',
+            'in': 'query',
+            'type': 'string',
+            'required': False,
+            'description': 'Lower bound timestamp (inclusive), format YYYYMMDD_HHMMSS'
+        },
+        {
+            'name': 'before_timestamp',
+            'in': 'query',
+            'type': 'string',
+            'required': False,
+            'description': 'Keyset upper bound timestamp (exclusive), format YYYYMMDD_HHMMSS'
+        },
+        {
+            'name': 'before_id',
+            'in': 'query',
+            'type': 'integer',
+            'required': False,
+            'description': 'Tie-breaker ID for before_timestamp keyset paging'
+        }
+    ],
+    'responses': {
+        '200': {'description': 'Inbox recordings window'},
+        '500': {'description': 'Server error'}
+    }
+})
+def get_recordings_inbox():
     try:
         limit = request.args.get('limit', default=1000, type=int)
         since_timestamp = request.args.get('since_timestamp', default=None, type=str)
@@ -557,97 +587,6 @@ def _recordings_inbox_window_impl():
         error_logger.error(f"Error getting inbox recordings window: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-
-@recordings_bp.route('/recordings/inbox', methods=['GET'])
-@swag_from({
-    'tags': ['Recordings'],
-    'summary': 'Get a bounded inbox window of recordings',
-    'parameters': [
-        {
-            'name': 'limit',
-            'in': 'query',
-            'type': 'integer',
-            'required': False,
-            'description': 'Maximum number of recordings to return (default 1000, max 5000)'
-        },
-        {
-            'name': 'since_timestamp',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Lower bound timestamp (inclusive), format YYYYMMDD_HHMMSS'
-        },
-        {
-            'name': 'before_timestamp',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Keyset upper bound timestamp (exclusive), format YYYYMMDD_HHMMSS'
-        },
-        {
-            'name': 'before_id',
-            'in': 'query',
-            'type': 'integer',
-            'required': False,
-            'description': 'Tie-breaker ID for before_timestamp keyset paging'
-        }
-    ],
-    'responses': {
-        '200': {'description': 'Inbox recordings window'},
-        '500': {'description': 'Server error'}
-    }
-})
-def get_recordings_inbox_window():
-    """Get a bounded recordings window for fast inbox loading."""
-    return _recordings_inbox_window_impl()
-
-
-@recordings_bp.route('/recordings/inbox/range', methods=['GET'])
-@swag_from({
-    'tags': ['Recordings'],
-    'summary': 'Chunked inbox range (lazy load)',
-    'description': (
-        'Same query parameters and response as GET /recordings/inbox. '
-        'Use this endpoint when loading older pages or scroll chunks so traffic is explicit.'
-    ),
-    'parameters': [
-        {
-            'name': 'limit',
-            'in': 'query',
-            'type': 'integer',
-            'required': False,
-            'description': 'Maximum number of recordings to return (default 1000, max 5000)'
-        },
-        {
-            'name': 'since_timestamp',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Lower bound timestamp (inclusive), format YYYYMMDD_HHMMSS'
-        },
-        {
-            'name': 'before_timestamp',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Keyset upper bound timestamp (exclusive), format YYYYMMDD_HHMMSS'
-        },
-        {
-            'name': 'before_id',
-            'in': 'query',
-            'type': 'integer',
-            'required': False,
-            'description': 'Tie-breaker ID for before_timestamp keyset paging'
-        }
-    ],
-    'responses': {
-        '200': {'description': 'Inbox recordings window'},
-        '500': {'description': 'Server error'}
-    }
-})
-def get_recordings_inbox_range():
-    """Lazy chunk loads for the dashboard view — identical behavior to /recordings/inbox."""
-    return _recordings_inbox_window_impl()
 
 
 @recordings_bp.route('/recordings/inbox/count', methods=['GET'])

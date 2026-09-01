@@ -252,32 +252,10 @@ class MaintenanceService:
                     except (OSError, FileNotFoundError):
                         pass
         except Exception as e:
-            log.warning(f"Error calculating size for {directory}: {e}")
+            log.warning("Error calculating size for %s: %s", directory, e)
         
         return total_size
-    
-    def _calculate_per_channel_usage(self) -> Dict:
-        """Calculate disk usage per channel."""
-        per_channel = {}
-        recordings_dir = DATA_ROOT / "recordings"
 
-        if not recordings_dir.exists():
-            return per_channel
-
-        try:
-            for item_path in recordings_dir.iterdir():
-                if item_path.is_dir():
-                    item = item_path.name
-
-                    # Check if it's a channel directory (channel_X or MAC address format)
-                    if item.startswith("channel_") or len(item) == 12:
-                        size = self._calculate_directory_size(item_path)
-                        per_channel[item] = size
-        except Exception as e:
-            log.warning(f"Error calculating per-channel usage: {e}")
-        
-        return per_channel
-    
     def _get_top_tables(self, db_path, limit: int = 10) -> List[Dict]:
         """
         Get top N largest tables in a database.

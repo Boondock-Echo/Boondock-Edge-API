@@ -280,16 +280,6 @@ def verify_json_files():
     return status
 
 
-# Auto-initialize on module import (optional - can be called explicitly)
-def ensure_db_initialized():
-    """Ensure database is initialized without raising errors on import."""
-    try:
-        if not os.path.exists(SETTINGS_JSON):
-            initialize_all_json_files()
-    except Exception as e:
-        logger.warning(f"Database initialization encountered an issue: {e}")
-
-
 if __name__ == "__main__":
     # Setup logging for standalone execution
     logging.basicConfig(

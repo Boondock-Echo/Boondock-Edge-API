@@ -790,27 +790,11 @@ class MultiChannelAudioHandler:
 
                 if not self.upload_queue.empty():
                     task = self.upload_queue.get()
-                    fn = os.path.basename(task.file_path)
                     self._pending_filenames_in_queue.discard(task.file_path)
-                    transcription_logger.debug(f"Processing queued file: {task.file_path} for channel {task.channel_id}")
+                    transcription_logger.debug("Processing queued file: %s for channel %s", task.file_path, task.channel_id)
                     
                     channel = None
-                    processing_started_at = time.perf_counter()
-                    step_started_at = processing_started_at
-
                     try:
-                        if task.enqueued_monotonic is not None:
-                            queue_wait_ms = (time.perf_counter() - task.enqueued_monotonic) * 1000
-                            queue_clock = 'monotonic'
-                        else:
-                            try:
-                                queued_at = datetime.fromisoformat(task.created_at.replace('Z', '+00:00'))
-                                queue_wait_ms = (datetime.now(timezone.utc) - queued_at).total_seconds() * 1000
-                                queue_clock = 'wall_clock_restart_fallback'
-                            except (AttributeError, TypeError, ValueError):
-                                queue_wait_ms = -1
-                                queue_clock = 'unavailable'
-
                         task.status = "processing"
                         task.processing_started_at = datetime.now(timezone.utc)
                         
@@ -1000,10 +984,6 @@ class MultiChannelAudioHandler:
         except Exception as e:
             error_logger.error(f"Error reading queue_history.json: {str(e)}")
             return []
-
-    def get_queue_history_entries(self, limit=100):
-        """Read queue_history.json and return list of entries (newest first)."""
-        return self._read_queue_history_json()[:limit]
 
     def get_queue_logs(self, status_filter=None, limit=None, page=1, date_filter=None):
         """
@@ -1421,33 +1401,6 @@ class MultiChannelAudioHandler:
         channel = self.get_or_create_channel(channel_id)
         return channel.get_recordings()
 
-    def process_uploaded_file(self, file_path, channel_id):
-        """Process an uploaded audio file and save its transcription."""
-        try:
-            channel = self.get_or_create_channel(channel_id)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            transcription_logger.debug(f"Starting transcription for uploaded file: {file_path}")
-            transcription = self.transcription_service.transcribe_audio(
-                file_path,
-                use_local=self.transcribe_method == "local",
-            )
-            transcription_logger.debug(f"Transcription completed for uploaded file: {file_path}")
-
-            if transcription:
-                channel.save_recording(file_path, timestamp, transcription)
-                return True, {
-                    'filename': os.path.basename(file_path),
-                    'timestamp': timestamp,
-                    'transcription': transcription
-                }
-            else:
-                return False, "Transcription failed - no result returned"
-
-        except Exception as e:
-            error_logger.error(f"Error processing uploaded file: {str(e)}")
-            return False, str(e)
-
 # Singleton instance
 _audio_handler = None
 _audio_handler_lock = threading.Lock()
@@ -1465,11 +1418,6 @@ def get_audio_handler():
                     error_logger.error(f"Failed to initialize audio handler in get_audio_handler: {str(e)}")
                     raise
     return _audio_handler
-
-
-def init_audio_handler():
-    """Initialize the singleton audio handler instance."""
-    return get_audio_handler()
 
 
 def _create_audio_handler():
