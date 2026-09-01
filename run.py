@@ -65,8 +65,18 @@ def _select_socketio_async_mode():
     if requested not in ("auto", "gevent"):
         logger.warning("Unknown SOCKETIO_ASYNC_MODE=%r; using automatic selection", requested)
 
+    # ``gevent-websocket`` exposes the top-level ``geventwebsocket`` package;
+    # there is no ``gevent.websocket`` module.  Probing the latter therefore
+    # forced every healthy gevent installation into the threading fallback.
+    # Instantiate SocketIO as well so the child validates the same Engine.IO
+    # backend that the server will use, rather than only importing gevent.
+    probe_code = (
+        "import gevent; import geventwebsocket; "
+        "from flask_socketio import SocketIO; "
+        "assert SocketIO(async_mode='gevent').async_mode == 'gevent'"
+    )
     probe = subprocess.run(
-        [sys.executable, "-c", "import gevent.websocket"],
+        [sys.executable, "-c", probe_code],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -277,8 +287,11 @@ def main():
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}")
+    except Exception:
+        # Keep the traceback in both the journal and logs database.  Previously
+        # the final visible message could be "Database logs flushed", obscuring
+        # the actual startup failure immediately before shutdown.
+        logger.exception("Server failed")
         sys.exit(1)
     finally:
         # Cleanup
