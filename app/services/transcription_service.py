@@ -67,7 +67,7 @@ def request_openai_transcription(audio_file, filename, timeout=60):
 
     """Send audio to the configured OpenAI transcription proxy."""
     headers = {
-        "User-Agent": "BoondockEdge/1.0",
+        "User-Agent": "BoondockEdge/2.0-beta.01",
         "Accept": "application/json",
         "X-Boondock-Key": api_key,
     }
@@ -271,16 +271,6 @@ class TranscriptionService:
                 self._unload_whisper_model()
         transcription_logger.info("TranscriptionService shutdown complete")
 
-    def _initial_connectivity_check(self):
-        """
-        Perform initial connectivity check for remote services on startup
-        to determine which services are available
-        """
-        if not self._check_nodes_connectivity():
-            self.nodes_available = False
-            transcription_logger.warning("Nodes service unavailable at startup - disabled until restart")
-
-
     def transcribe_audio(self, filepath, use_local=True, use_nodes=False, language=None,
                          **local_kwargs):
         """
@@ -306,10 +296,12 @@ class TranscriptionService:
                 result = self._transcribe_boondock_api(filepath)
                 if result:
                     return result
-                error_logger.error(f"Boondock API returned empty result for {filepath}")
+                error_logger.error("Boondock API returned empty result for %s", filepath)
+            except (ConnectionResetError, ConnectionError) as e:
+                error_logger.error("Boondock API transcription failed for %s. Error %s: %s", filepath, type(e).__name__, str(e))
             except Exception as e:
                 error_logger.error(
-                    f"Boondock API transcription failed for {filepath}: {str(e)}",
+                    "Boondock API transcription failed for %s. Error: %s/%s", filepath, type(e).__name__, str(e),
                     exc_info=True,
                 )
             return "..."

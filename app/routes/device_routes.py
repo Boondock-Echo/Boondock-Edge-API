@@ -52,6 +52,7 @@ from ..routes.route_utils import (
     get_recording_path,
     channels_lock,
     calculate_wav_duration,
+    allowed_file,
 )
 from ..services.settings_manager import get_settings_manager, normalize_mac_address
 from ..services.device_health_monitor import (
@@ -1307,6 +1308,9 @@ def upload_audio_s3():
     if not uploaded_filename:
         logging.warning("Invalid filename in upload")
         return jsonify({"error": "Invalid filename"}), 400
+    if not allowed_file(uploaded_filename, {"wav"}):
+        logging.warning("Unsupported audio file extension: %s", uploaded_filename)
+        return jsonify({"error": "Unsupported audio file type; expected a WAV file"}), 400
 
     # Get channel_id from MAC address for local storage and database
     channel_id = get_channel_id_from_mac(mac_address.upper(), refresh=True)

@@ -110,16 +110,3 @@ def get_all_channel_visual_states() -> Dict[str, Dict]:
                 out[k] = {"state": st, "timestamp": ts}
         return out
 
-
-def clear_channel_visual_state(mac_address: str) -> None:
-    mac = _mac_key(mac_address)
-    with _state_lock:
-        if mac in _channel_states:
-            del _channel_states[mac]
-        _last_seen.pop(mac, None)
-
-
-def clear_all_visual_states() -> None:
-    """Clear all channel visual states (useful for testing)."""
-    with _state_lock:
-        _channel_states.clear()

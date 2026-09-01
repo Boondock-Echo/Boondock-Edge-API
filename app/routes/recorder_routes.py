@@ -23,14 +23,14 @@ from app.services.recorder_monitor import (
     initialize_monitoring,
     send_command_to_ports,
     run_autoconfig_sequence,
+    reconnect_device,
     reconnect_all_monitored_devices,
-    get_parsed_short_status,
-    get_parsed_health_data,
-    get_parsed_config_data,
     get_error_logs,
     get_all_parsed_data,
     set_port_flashing,
     get_port_mac_map,
+    load_reboot_history,
+    sync_reboot_counts_from_logs,
 )
 
 recorders_bp = Blueprint('recorders', __name__)
@@ -1716,7 +1716,6 @@ def reset_monitor_connection():
         return jsonify({'message': 'Recorder discovery is disabled.'}), 403
     
     try:
-        from app.services.recorder_monitor import reconnect_device
         success = reconnect_device(port)
         
         if success:
@@ -1763,7 +1762,6 @@ def get_reboot_counts():
 def sync_reboot_counts():
     """Sync reboot counts from log files to inventory."""
     try:
-        from app.services.recorder_monitor import sync_reboot_counts_from_logs
         updated = sync_reboot_counts_from_logs()
         
         return jsonify({
@@ -1778,9 +1776,7 @@ def sync_reboot_counts():
 @recorders_bp.route('/reboot-history', methods=['GET'])
 def get_reboot_history():
     """Get reboot history for a device by MAC address or port."""
-    try:
-        from app.services.recorder_monitor import load_reboot_history
-        
+    try:        
         mac_address = request.args.get('mac')
         port = request.args.get('port')
         limit = int(request.args.get('limit', 5))  # Default to last 5 reboots
