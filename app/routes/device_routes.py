@@ -9,10 +9,11 @@ import logging
 import sqlite3
 import subprocess
 import io
+import time
 import pytz
 from config import DATA_ROOT
 from datetime import datetime, timezone
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, after_this_request, jsonify, request, send_file
 from flasgger import swag_from
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlencode
@@ -1163,6 +1164,103 @@ def device_cloud_events_list(mac):
 })
 def upload_audio_s3():
     """Upload audio files from Boondock devices to iDrive storage"""
+    # Registering a response callback here ensures early validation returns are
+    # timed as well as the complete upload path for both routes handled by this
+    # function.
+    is_v2_audio = request.path.rstrip("/").endswith("/api/v2/audio/s3")
+    request_started_at = time.perf_counter()
+    step_started_at = request_started_at
+    previous_log_duration_ms = 0.0
+    request_size = request.content_length
+
+    @after_this_request
+    def log_audio_performance(response):
+        duration_ms = (time.perf_counter() - request_started_at) * 1000
+        try:
+            filename = request.files["audio_file"].filename
+        except Exception:
+            filename = 'Error'
+            pass
+
+        logging.info(
+            "audio_s3_performance file=%s status_code=%s "
+            "duration_ms=%.2f request_bytes=%s response_bytes=%s",
+            filename,
+            response.status_code,
+            duration_ms,
+            request_size if request_size is not None else "unknown",
+            response.content_length
+            if response.content_length is not None
+            else "unknown",
+        )
+        return response
+
+    def log_audio_step(step):
+        """Log both the current step and cumulative request duration."""
+        try:
+            filename = request.files["audio_file"].filename
+        except Exception:
+            filename = 'Error'
+            pass
+
+        nonlocal previous_log_duration_ms, step_started_at
+        now = time.perf_counter()
+        logging.info(
+            "audio_s3_step_performance file=%s step=%s "
+            "step_duration_ms=%.2f total_duration_ms=%.2f "
+            "previous_log_duration_ms=%.2f",
+            filename,
+            step,
+            (now - step_started_at) * 1000,
+            (now - request_started_at) * 1000,
+            previous_log_duration_ms,
+        )
+        # Start the next step after the log record has been emitted. Logging can
+        # block on the configured handler (for example journald), and charging
+        # that delay to the next application step produces misleading timings.
+        log_completed_at = time.perf_counter()
+        previous_log_duration_ms = (log_completed_at - now) * 1000
+        step_started_at = log_completed_at
+
+    def log_audio_request():
+        """Log request metadata without exposing credentials or file contents."""
+        redacted_headers = {"authorization", "cookie", "proxy-authorization"}
+        headers = {
+            key: "[REDACTED]" if key.lower() in redacted_headers else value
+            for key, value in request.headers.items()
+        }
+        sensitive_form_fields = {"access_token", "api_key", "password", "secret", "token"}
+        form = {
+            key: ["[REDACTED]"] if key.lower() in sensitive_form_fields else values
+            for key, values in request.form.to_dict(flat=False).items()
+        }
+        files = {
+            key: [
+                {
+                    "filename": uploaded_file.filename,
+                    "content_type": uploaded_file.content_type,
+                    "content_length": uploaded_file.content_length,
+                }
+                for uploaded_file in uploaded_files
+            ]
+            for key, uploaded_files in request.files.lists()
+        }
+        request_details = {
+            "method": request.method,
+            "path": request.path,
+            "query": request.args.to_dict(flat=False),
+            "headers": headers,
+            "content_type": request.content_type,
+            "content_length": request.content_length,
+            "form": form,
+            "files": files,
+            "remote_addr": request.remote_addr,
+        }
+        logging.info(
+            "audio_s3_request request=%s",
+            json.dumps(request_details, sort_keys=True, default=str),
+        )
+
     # Initialize LED service for receiving event
     led_service = None
     try:
@@ -1172,6 +1270,7 @@ def upload_audio_s3():
         logging.debug(f"LED status service not available: {e}")
     
     load_tokens()
+    log_audio_step("initialization")
 
     # 1. ---- Parse auth header --------------------------------------------------
     auth_header = request.headers.get("Authorization")
@@ -1180,12 +1279,15 @@ def upload_audio_s3():
         token = auth_header.split("Bearer ")[1]
     elif auth_header:
         logging.warning("Authorization header present but missing 'Bearer ' prefix")
+    log_audio_step("auth_header")
 
     # 2. ---- Validate form data -------------------------------------------------
     # Wrap form data access in try-except to handle connection errors gracefully
     try:
         if "mac_address" not in request.form or "audio_file" not in request.files:
             logging.warning("Missing mac_address or audio_file in request")
+            log_audio_request()
+            log_audio_step("form_parsing")
             return (
                 jsonify({"error": "Missing required fields (mac_address and audio_file)"}),
                 400,
@@ -1193,17 +1295,21 @@ def upload_audio_s3():
         
         mac_address = request.form["mac_address"]
         audio_file = request.files["audio_file"]
+        log_audio_request()
+        log_audio_step("form_parsing")
     except (OSError, ConnectionResetError, ConnectionError) as e:
         # Handle cases where client disconnects before full request is received
         error_msg = str(e)
         if "unexpected end of file" in error_msg.lower() or "connection reset" in error_msg.lower():
             logging.warning(f"Client disconnected during upload: {error_msg}")
+            log_audio_step("form_parsing")
             return (
                 jsonify({"error": "Upload interrupted - connection closed by client"}),
                 499,  # 499 Client Closed Request (non-standard but appropriate)
             )
         else:
             logging.error(f"Connection error during form data parsing: {error_msg}")
+            log_audio_step("form_parsing")
             return (
                 jsonify({"error": "Connection error during upload"}),
                 400,
@@ -1211,6 +1317,7 @@ def upload_audio_s3():
     except Exception as e:
         # Catch any other unexpected errors during form parsing
         logging.error(f"Unexpected error during form data parsing: {str(e)}")
+        log_audio_step("form_parsing")
         return (
             jsonify({"error": "Failed to parse request data"}),
             400,
@@ -1222,9 +1329,9 @@ def upload_audio_s3():
             led_service.set_receiving()
         except Exception as e:
             logging.debug(f"Failed to set LED receiving event: {e}")
+    log_audio_step("led_receiving")
 
     # v2 path defaults to MP3 when convert_to_mp3 omitted (cloud API); v1 defaults to WAV
-    _is_v2_audio = request.path.rstrip("/").endswith("/api/v2/audio/s3")
     if "convert_to_mp3" in request.form:
         convert_to_mp3 = request.form.get("convert_to_mp3", "false").lower() in [
             "true",
@@ -1232,7 +1339,7 @@ def upload_audio_s3():
             "yes",
         ]
     else:
-        convert_to_mp3 = bool(_is_v2_audio)
+        convert_to_mp3 = bool(is_v2_audio)
 
     tags_param = request.form.get("tags")
     timestamp_str = request.form.get("timestamp", "").strip()
@@ -1257,6 +1364,7 @@ def upload_audio_s3():
                 tagging_header = urlencode(tag_groups)
         except (json.JSONDecodeError, ValueError):
             logging.warning("Invalid tags JSON")
+            log_audio_step("upload_metadata")
             return jsonify({"error": "Invalid tags JSON"}), 400
 
     # ── Timestamp (unchanged) ---------------------------------------------------
@@ -1267,9 +1375,11 @@ def upload_audio_s3():
                 utc_now = pytz.UTC.localize(utc_now)
         except Exception:
             logging.warning("Invalid timestamp format: %s", timestamp_str)
+            log_audio_step("upload_metadata")
             return jsonify({"error": "Invalid timestamp format; use ISO 8601"}), 400
     else:
         utc_now = datetime.now(pytz.UTC)
+    log_audio_step("upload_metadata")
 
     # 3. ---- Token-vs-MAC validation (unchanged) --------------------------------
     warning = None
@@ -1299,18 +1409,23 @@ def upload_audio_s3():
         token_valid,
         bool(new_token),
     )
+    log_audio_step("token_validation")
 
     if audio_file.filename == "":
         logging.warning("Empty filename in upload")
+        log_audio_step("file_validation")
         return jsonify({"error": "No file selected"}), 400
 
     uploaded_filename = secure_filename(audio_file.filename)
     if not uploaded_filename:
         logging.warning("Invalid filename in upload")
+        log_audio_step("file_validation")
         return jsonify({"error": "Invalid filename"}), 400
     if not allowed_file(uploaded_filename, {"wav"}):
         logging.warning("Unsupported audio file extension: %s", uploaded_filename)
+        log_audio_step("file_validation")
         return jsonify({"error": "Unsupported audio file type; expected a WAV file"}), 400
+    log_audio_step("file_validation")
 
     # Get channel_id from MAC address for local storage and database
     channel_id = get_channel_id_from_mac(mac_address.upper(), refresh=True)
@@ -1322,6 +1437,7 @@ def upload_audio_s3():
             logging.warning(f"Failed to create channel for MAC address: {mac_address}, continuing without local save")
         else:
             logging.info(f"Successfully created channel {channel_id} for MAC address: {mac_address}")
+    log_audio_step("channel_lookup")
 
     logging.info("Received file for Channel ID: %s for MAC: %s with timestamp: %s", channel_id, mac_address, utc_now.isoformat())
 
@@ -1343,6 +1459,7 @@ def upload_audio_s3():
     recording_id = None
     is_duplicate = False
     crc_value = None
+    log_audio_step("s3_configuration")
 
     # 5. ---- Save locally and upload to S3 --------------------------------------
     try:
@@ -1357,6 +1474,7 @@ def upload_audio_s3():
                 crc_result = check_and_update_duplicate_cache(file_bytes, channel_id, crc_name)
                 is_duplicate = bool(crc_result.get("is_duplicate", False))
                 crc_value = crc_result.get("crc")
+                log_audio_step("duplicate_check")
                 if is_duplicate:
                     logging.info(
                         "Duplicate file detected (S3 device upload, within 30 min window) for channel %s: "
@@ -1392,6 +1510,7 @@ def upload_audio_s3():
                 except OSError as e:
                     error_logger.error("Failed to create directory %s: %s", directory_path, str(e))
                     # Continue with S3 upload even if local save fails
+                log_audio_step("local_path_setup")
                 
                 # Save the file locally (always save as WAV for local storage)
                 if convert_to_mp3:
@@ -1405,6 +1524,7 @@ def upload_audio_s3():
                 
                 local_file_saved = True
                 logging.info("File saved locally: %s", absolute_path)
+                log_audio_step("local_file_save")
                 
                 # Calculate file size
                 file_size = absolute_path.stat().st_size
@@ -1421,6 +1541,7 @@ def upload_audio_s3():
                     # Fallback to file size estimation if WAV file can't be read
                     logging.warning("Could not read WAV file for duration calculation, using file size estimation: %s", e)
                     duration = calculate_wav_duration(file_size)
+                log_audio_step("audio_duration")
                 
                 # Create recording entry in database
                 conn = sqlite3.connect(DB_PATH)
@@ -1437,6 +1558,7 @@ def upload_audio_s3():
                 conn.commit()
                 conn.close()
                 logging.info("Database entry created: recording_id=%s", recording_id)
+                log_audio_step("database_insert")
                 
                 # Track file upload - file is saved and database entry created
                 track_file_upload(mac_address.upper())
@@ -1445,6 +1567,7 @@ def upload_audio_s3():
                 error_logger.error(f"Failed to save file locally: {str(local_error)}")
                 # Continue with S3 upload even if local save fails
                 local_file_saved = False
+        log_audio_step("local_persistence")
 
          # Queue for transcription if file was saved locally (do this BEFORE S3 upload check)
         if local_file_saved and channel_id is not None and relative_path:
@@ -1460,6 +1583,7 @@ def upload_audio_s3():
             except Exception as queue_error:
                 error_logger.error(f"Failed to queue file for transcription: {str(queue_error)}")
                 # Don't fail the request if transcription queueing fails
+        log_audio_step("transcription_queue")
 
         # Upload to S3 (only if enabled in settings)
         s3_filename = f"{absolute_path.stem}.{ext}"
@@ -1467,6 +1591,7 @@ def upload_audio_s3():
         logging.debug("bucket=%s, s3_key=%s", bucket, s3_key)
 
         if not is_s3_enabled():
+            log_audio_step("s3_enabled_check")
             logging.debug("S3 upload is disabled in settings, skipping S3 upload")
             # Use same success message format as when S3 is enabled, so device recognizes it as success
             response = {
@@ -1486,7 +1611,9 @@ def upload_audio_s3():
                 response["is_duplicate"] = is_duplicate
                 if crc_value is not None:
                     response["crc"] = crc_value
+            log_audio_step("response_build")
             return jsonify(response), 200
+        log_audio_step("s3_enabled_check")
         
         # Ensure bucket exists (only once, using the configured bucket name)
         # Wrap S3 operations in try-except to prevent errors from reaching the device
@@ -1496,6 +1623,7 @@ def upload_audio_s3():
         except Exception as s3_bucket_error:
             logging.error(f"S3 bucket check/creation failed: {str(s3_bucket_error)}")
             # Continue without S3 upload, but don't fail the request
+        log_audio_step("s3_bucket_check")
 
         # ── If conversion requested, transcode on-the-fly using ffmpeg ─────────
         if convert_to_mp3:
@@ -1544,6 +1672,7 @@ def upload_audio_s3():
             else:
                 audio_file.seek(0)  # Reset file pointer
                 upload_source = audio_file
+        log_audio_step("audio_conversion")
 
         extra_args = {}
         if tagging_header:
@@ -1571,6 +1700,7 @@ def upload_audio_s3():
             if not convert_to_mp3 and local_file_saved and absolute_path and os.path.exists(absolute_path):
                 if hasattr(upload_source, 'close'):
                     upload_source.close()
+        log_audio_step("s3_upload")
 
         response = {
             "message": "Audio uploaded successfully",
@@ -1597,9 +1727,11 @@ def upload_audio_s3():
             except Exception as e:
                 logging.debug(f"Failed to stop LED receiving event: {e}")
 
+        log_audio_step("response_build")
         return jsonify(response), 200
 
     except Exception as exc:
+        log_audio_step("error_handling")
         logging.exception("Failed during S3 upload flow: %s", exc)
         # Stop receiving event on error (non-blocking)
         if led_service:
