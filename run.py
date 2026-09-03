@@ -12,6 +12,7 @@ Or set environment variable before running:
   set PRODUCTION_MODE=false      # Windows
 """
 import json
+import atexit
 import os
 import sys
 import logging
@@ -21,6 +22,7 @@ import threading
 from pathlib import Path
 
 # Setup logging with database handler
+from app.utils.async_logging import create_async_log_dispatcher
 from app.utils.db_logging_handler import DatabaseLoggingHandler
 
 # Create formatter
@@ -29,23 +31,40 @@ formatter = logging.Formatter(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# Setup handlers
-handlers = [
-    logging.StreamHandler(sys.stdout)  # Console output
-]
+# Keep stdout/journald writes off application threads. A stalled logging sink
+# must not delay an API request.
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
 
 # Add database handler for app logs (stored in logs.db)
 app_db_handler = DatabaseLoggingHandler(log_type='app', level=logging.INFO)
 app_db_handler.setFormatter(formatter)
-handlers.append(app_db_handler)
 
-# Configure root logger
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=handlers
+queue_handler, queue_listener = create_async_log_dispatcher(
+    console_handler,
+    app_db_handler,
 )
+
+# Configure the root explicitly so QueueHandler does not inherit a formatter;
+# destination handlers are responsible for formatting after dequeueing.
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()
+root_logger.addHandler(queue_handler)
+queue_listener.start()
+
+_log_listener_stopped = False
+
+
+def stop_log_listener():
+    """Drain the application log queue exactly once."""
+    global _log_listener_stopped
+    if not _log_listener_stopped:
+        queue_listener.stop()
+        _log_listener_stopped = True
+
+
+atexit.register(stop_log_listener)
 logger = logging.getLogger(__name__)
 
 
@@ -65,8 +84,18 @@ def _select_socketio_async_mode():
     if requested not in ("auto", "gevent"):
         logger.warning("Unknown SOCKETIO_ASYNC_MODE=%r; using automatic selection", requested)
 
+    # ``gevent-websocket`` exposes the top-level ``geventwebsocket`` package;
+    # there is no ``gevent.websocket`` module.  Probing the latter therefore
+    # forced every healthy gevent installation into the threading fallback.
+    # Instantiate SocketIO as well so the child validates the same Engine.IO
+    # backend that the server will use, rather than only importing gevent.
+    probe_code = (
+        "import gevent; import geventwebsocket; "
+        "from flask_socketio import SocketIO; "
+        "assert SocketIO(async_mode='gevent').async_mode == 'gevent'"
+    )
     probe = subprocess.run(
-        [sys.executable, "-c", "import gevent.websocket"],
+        [sys.executable, "-c", probe_code],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -277,22 +306,18 @@ def main():
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}")
+    except Exception:
+        # Keep the traceback in both the journal and logs database.  Previously
+        # the final visible message could be "Database logs flushed", obscuring
+        # the actual startup failure immediately before shutdown.
+        logger.exception("Server failed")
         sys.exit(1)
     finally:
         # Cleanup
         logger.info("Shutting down...")
-        
-        # Flush database logs
-        try:
-            from app.services.db_logging_manager import get_db_logging_manager
-            db_logging_manager = get_db_logging_manager()
-            db_logging_manager.shutdown()
-            logger.info("Database logs flushed")
-        except Exception as e:
-            logger.debug(f"Error flushing database logs: {e}")
-        
+
+        # Keep both logging queues alive while services shut down because their
+        # cleanup paths may emit additional records.
         if led_enabled:
             try:
                 from app.services.led_status_service import get_led_status_service
@@ -301,13 +326,26 @@ def main():
                 led_service.send_shutdown()
             except Exception:
                 pass
-        
+
         if gpio_enabled:
             try:
                 from app.services.gpio_service import get_gpio_service
                 get_gpio_service().stop()
             except Exception:
                 pass
+
+        logger.info("Application cleanup complete")
+
+        # Drain the root logging queue first. DatabaseLoggingHandler may enqueue
+        # records into the database manager while the listener is draining, so
+        # the database queue must be shut down second. Do not log after this.
+        stop_log_listener()
+        try:
+            from app.services.db_logging_manager import get_db_logging_manager
+            get_db_logging_manager().shutdown()
+        except Exception:
+            pass
+        logging.shutdown()
 
 
 if __name__ == '__main__':
