@@ -8,6 +8,7 @@ Logging is asynchronous to prevent blocking the main application thread.
 
 import sqlite3
 import logging
+import time
 import threading
 import queue
 from config import Config
@@ -205,8 +206,15 @@ class DatabaseLoggingManager:
                 
                 # Write batch to database
                 if batch:
+                    start = time.perf_counter()
                     self._write_batch(batch)
                     batch = []
+                    duration_ms = (time.perf_counter() - start) * 1000
+                    if duration_ms > 100:
+                        print(
+                            f"DB log write slow: {duration_ms:.2f} ms batch_size={len(batch)}",
+                            flush=True
+                        )
             except Exception as e:
                 # Log error to console (can't use database logger here)
                 print(f"Error in database logging worker: {e}")

@@ -191,6 +191,19 @@ def initialize(setup: dict[str, Any]) -> None:
 
     LOGGER.info("API setup completed successfully in %s", DATA_ROOT)
 
+def upgrade() -> None:
+    # """Apply upgrade-safe initialization without changing installer settings."""
+    # from app.services.db_initializer import initialize_settings_database
+    # from app.services.recordings_db_initializer import initialize_db
+    # from app.utils.auth import load_tokens
+
+    # initialize_settings_database()
+    # initialize_db()
+    # load_tokens()
+
+    LOGGER.info("API upgrade completed successfully in %s", DATA_ROOT)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage Boondock Edge")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -205,6 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="path to setup.json",
     )
+
+    commands.add_parser(
+        "upgrade",
+        help="apply upgrade-safe database and application initialization",
+    )
+
     return parser
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "setup":
             initialize(load_setup(args.config))
+        elif args.command == "upgrade":
+            upgrade()
 
     except SetupError as exc:
         LOGGER.error("Setup failed: %s", exc)

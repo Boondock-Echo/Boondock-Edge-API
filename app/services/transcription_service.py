@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from queue import Queue
+from requests.exceptions import HTTPError
 import sqlite3
 import json
 from ..utils.logging_setup import error_logger, warning_logger, transcription_logger, db_logger
@@ -297,7 +298,7 @@ class TranscriptionService:
                 if result:
                     return result
                 error_logger.error("Boondock API returned empty result for %s", filepath)
-            except (ConnectionResetError, ConnectionError) as e:
+            except (ConnectionResetError, ConnectionError, HTTPError) as e:
                 error_logger.error("Boondock API transcription failed for %s. Error %s: %s", filepath, type(e).__name__, str(e))
             except Exception as e:
                 error_logger.error(
