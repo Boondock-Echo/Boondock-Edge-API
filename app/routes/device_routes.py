@@ -1261,14 +1261,6 @@ def upload_audio_s3():
             json.dumps(request_details, sort_keys=True, default=str),
         )
 
-    # Initialize LED service for receiving event
-    led_service = None
-    try:
-        from app.services.led_status_service import get_led_status_service
-        led_service = get_led_status_service()
-    except Exception as e:
-        logging.debug(f"LED status service not available: {e}")
-    
     load_tokens()
     log_audio_step("initialization")
 
@@ -1322,14 +1314,6 @@ def upload_audio_s3():
             jsonify({"error": "Failed to parse request data"}),
             400,
         )
-    
-    # Set receiving event when device is receiving audio upload (non-blocking)
-    if led_service:
-        try:
-            led_service.set_receiving()
-        except Exception as e:
-            logging.debug(f"Failed to set LED receiving event: {e}")
-    log_audio_step("led_receiving")
 
     # v2 path defaults to MP3 when convert_to_mp3 omitted (cloud API); v1 defaults to WAV
     if "convert_to_mp3" in request.form:
@@ -1720,29 +1704,12 @@ def upload_audio_s3():
             if crc_value is not None:
                 response["crc"] = crc_value
 
-        # Stop receiving event when audio upload is complete (non-blocking)
-        if led_service:
-            try:
-                led_service.stop_receiving()
-            except Exception as e:
-                logging.debug(f"Failed to stop LED receiving event: {e}")
-
         log_audio_step("response_build")
         return jsonify(response), 200
 
     except Exception as exc:
         log_audio_step("error_handling")
         logging.exception("Failed during S3 upload flow: %s", exc)
-        # Stop receiving event on error (non-blocking)
-        if led_service:
-            try:
-                led_service.stop_receiving()
-            except Exception as e:
-                logging.debug(f"Failed to stop LED receiving event: {e}")
-        return (
-            jsonify({"error": f"Failed to upload to S3 or create bucket: {exc}"}),
-            500,
-        )
 
 
 @device_bp.route('/V1/upload/logs', methods=['POST'])

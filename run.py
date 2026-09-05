@@ -53,6 +53,7 @@ root_logger.handlers.clear()
 root_logger.addHandler(queue_handler)
 queue_listener.start()
 
+logging.info("ASYNC LOGGING TEST - listener started")
 _log_listener_stopped = False
 
 

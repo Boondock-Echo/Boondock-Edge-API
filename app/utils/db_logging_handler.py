@@ -6,6 +6,7 @@ to the database asynchronously.
 """
 
 import logging
+import time
 import traceback
 from typing import Optional
 from ..services.db_logging_manager import get_db_logging_manager, LOG_TYPES
@@ -41,6 +42,8 @@ class DatabaseLoggingHandler(logging.Handler):
             record: LogRecord instance from Python logging
         """
         try:
+            start = time.perf_counter()
+
             # Determine log type based on level if not explicitly set
             if self.log_type == 'app':
                 if record.levelno >= logging.ERROR:
@@ -79,6 +82,10 @@ class DatabaseLoggingHandler(logging.Handler):
                 line_number=line_number,
                 exception_info=exception_info
             )
+
+            duration_ms = (time.perf_counter() - start) * 1000
+            if duration_ms > 100:
+                print("DatabaseLoggingHandler.emit slow:", round(duration_ms, 2), "ms", flush=True)
         except Exception:
             # Prevent logging errors from breaking the application
             # Use print as last resort
