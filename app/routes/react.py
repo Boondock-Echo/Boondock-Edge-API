@@ -25,7 +25,7 @@ def serve_assets(filename):
 @react_bp.route('/<path:path>')
 def serve_build_files(path):
     """Serve other build files (favicon, manifest, etc.)"""
-    if path == "api" or path.startswith("api/"):
+    if path == "api" or path.startswith("api"):
         abort(404)
     if (REACT_DIR / path).is_file():
         return send_from_directory(REACT_DIR, path)

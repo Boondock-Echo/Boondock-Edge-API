@@ -10,7 +10,9 @@ import sqlite3
 import json
 import logging
 import threading
+import time
 from config import Config, DATA_ROOT
+from app.utils.sqlite_utils import connect_sqlite, log_slow_operation
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,9 +113,7 @@ class SettingsManager:
     
     def _get_connection(self):
         """Get a database connection with proper isolation."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_sqlite(self.db_path, row_factory=True)
     
     def _initialize_database(self):
         """Initialize the database schema with all required tables."""
@@ -1033,7 +1033,9 @@ class SettingsManager:
 
     def get_all_tokens(self) -> Dict[str, Dict[str, Any]]:
         """Get all tokens as a dictionary keyed by token."""
+        started_at = time.perf_counter()
         with _db_lock:
+            lock_wait_ms = (time.perf_counter() - started_at) * 1000
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
@@ -1050,6 +1052,13 @@ class SettingsManager:
                 return tokens
             finally:
                 conn.close()
+                log_slow_operation(
+                    database="settings",
+                    operation="get_all_tokens",
+                    started_at=started_at,
+                    lock_wait_ms=lock_wait_ms,
+                    rows=len(tokens) if 'tokens' in locals() else None,
+                )
     
     def save_token(self, token: str, token_data: Dict[str, Any]) -> bool:
         """Save or update a token."""

@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import io
 import time
+import uuid
 import pytz
 from config import DATA_ROOT
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from werkzeug.utils import secure_filename
 
 from app.services.audio_handler import get_audio_handler
 from app.utils.crc_utils import check_and_update_duplicate_cache
+from app.utils.sqlite_utils import connect_sqlite, log_slow_operation
 from app.services.channel_state import (
     set_channel_visual_state,
     get_channel_visual_state,
@@ -1172,20 +1174,18 @@ def upload_audio_s3():
     step_started_at = request_started_at
     previous_log_duration_ms = 0.0
     request_size = request.content_length
+    request_id = uuid.uuid4().hex[:12]
+    audio_filename = None
+    deferred_step_logs = []
 
     @after_this_request
     def log_audio_performance(response):
         duration_ms = (time.perf_counter() - request_started_at) * 1000
-        try:
-            filename = request.files["audio_file"].filename
-        except Exception:
-            filename = 'Error'
-            pass
-
         logging.info(
-            "audio_s3_performance file=%s status_code=%s "
+            "audio_s3_performance request_id=%s file=%s status_code=%s "
             "duration_ms=%.2f request_bytes=%s response_bytes=%s",
-            filename,
+            request_id,
+            audio_filename or "Error",
             response.status_code,
             duration_ms,
             request_size if request_size is not None else "unknown",
@@ -1197,24 +1197,37 @@ def upload_audio_s3():
 
     def log_audio_step(step):
         """Log both the current step and cumulative request duration."""
-        try:
-            filename = request.files["audio_file"].filename
-        except Exception:
-            filename = 'Error'
-            pass
-
         nonlocal previous_log_duration_ms, step_started_at
         now = time.perf_counter()
-        logging.info(
-            "audio_s3_step_performance file=%s step=%s "
-            "step_duration_ms=%.2f total_duration_ms=%.2f "
-            "previous_log_duration_ms=%.2f",
-            filename,
+        step_log = (
             step,
             (now - step_started_at) * 1000,
             (now - request_started_at) * 1000,
             previous_log_duration_ms,
         )
+        if audio_filename is None:
+            # Accessing request.files here would parse (and potentially wait for)
+            # the entire multipart body. Keep the measurement, then emit it once
+            # form parsing has supplied the filename.
+            deferred_step_logs.append(step_log)
+            step_started_at = now
+            previous_log_duration_ms = 0.0
+            return
+
+        logs_to_emit = [*deferred_step_logs, step_log]
+        deferred_step_logs.clear()
+        for logged_step, step_duration, total_duration, prior_log_duration in logs_to_emit:
+            logging.info(
+                "audio_s3_step_performance request_id=%s file=%s step=%s "
+                "step_duration_ms=%.2f total_duration_ms=%.2f "
+                "previous_log_duration_ms=%.2f",
+                request_id,
+                audio_filename,
+                logged_step,
+                step_duration,
+                total_duration,
+                prior_log_duration,
+            )
         # Start the next step after the log record has been emitted. Logging can
         # block on the configured handler (for example journald), and charging
         # that delay to the next application step produces misleading timings.
@@ -1257,12 +1270,13 @@ def upload_audio_s3():
             "remote_addr": request.remote_addr,
         }
         logging.info(
-            "audio_s3_request request=%s",
+            "audio_s3_request request_id=%s request=%s",
+            request_id,
             json.dumps(request_details, sort_keys=True, default=str),
         )
 
     load_tokens()
-    log_audio_step("initialization")
+    log_audio_step("token_loading")
 
     # 1. ---- Parse auth header --------------------------------------------------
     auth_header = request.headers.get("Authorization")
@@ -1276,40 +1290,46 @@ def upload_audio_s3():
     # 2. ---- Validate form data -------------------------------------------------
     # Wrap form data access in try-except to handle connection errors gracefully
     try:
-        if "mac_address" not in request.form or "audio_file" not in request.files:
+        form_data = request.form
+        uploaded_files = request.files
+        uploaded_audio = uploaded_files.get("audio_file")
+        audio_filename = uploaded_audio.filename if uploaded_audio is not None else "Error"
+        if "mac_address" not in form_data or uploaded_audio is None:
             logging.warning("Missing mac_address or audio_file in request")
             log_audio_request()
-            log_audio_step("form_parsing")
+            log_audio_step("multipart_parsing")
             return (
                 jsonify({"error": "Missing required fields (mac_address and audio_file)"}),
                 400,
             )
         
-        mac_address = request.form["mac_address"]
-        audio_file = request.files["audio_file"]
+        mac_address = form_data["mac_address"]
+        audio_file = uploaded_audio
         log_audio_request()
-        log_audio_step("form_parsing")
+        log_audio_step("multipart_parsing")
     except (OSError, ConnectionResetError, ConnectionError) as e:
+        audio_filename = "Error"
         # Handle cases where client disconnects before full request is received
         error_msg = str(e)
         if "unexpected end of file" in error_msg.lower() or "connection reset" in error_msg.lower():
             logging.warning(f"Client disconnected during upload: {error_msg}")
-            log_audio_step("form_parsing")
+            log_audio_step("multipart_parsing")
             return (
                 jsonify({"error": "Upload interrupted - connection closed by client"}),
                 499,  # 499 Client Closed Request (non-standard but appropriate)
             )
         else:
             logging.error(f"Connection error during form data parsing: {error_msg}")
-            log_audio_step("form_parsing")
+            log_audio_step("multipart_parsing")
             return (
                 jsonify({"error": "Connection error during upload"}),
                 400,
             )
     except Exception as e:
+        audio_filename = "Error"
         # Catch any other unexpected errors during form parsing
         logging.error(f"Unexpected error during form data parsing: {str(e)}")
-        log_audio_step("form_parsing")
+        log_audio_step("multipart_parsing")
         return (
             jsonify({"error": "Failed to parse request data"}),
             400,
@@ -1528,19 +1548,28 @@ def upload_audio_s3():
                 log_audio_step("audio_duration")
                 
                 # Create recording entry in database
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
+                database_started_at = time.perf_counter()
+                conn = connect_sqlite(DB_PATH)
+                try:
+                    cursor = conn.cursor()
 
-                db_timestamp = datetime.now(pytz.UTC).strftime('%Y%m%d_%H%M%S')
-                relative_path = absolute_path.relative_to(DATA_ROOT).as_posix()
-                cursor.execute('''
-                    INSERT INTO recordings (channel_id, filename, timestamp, transcription, status, is_duplicate, crc, filesize, duration)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (channel_id, relative_path, db_timestamp, 'No transcription available', 'queued', 1 if is_duplicate else 0, crc_value, file_size, duration))
-                
-                recording_id = cursor.lastrowid
-                conn.commit()
-                conn.close()
+                    db_timestamp = datetime.now(pytz.UTC).strftime('%Y%m%d_%H%M%S')
+                    relative_path = absolute_path.relative_to(DATA_ROOT).as_posix()
+                    cursor.execute('''
+                        INSERT INTO recordings (channel_id, filename, timestamp, transcription, status, is_duplicate, crc, filesize, duration)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (channel_id, relative_path, db_timestamp, 'No transcription available', 'queued', 1 if is_duplicate else 0, crc_value, file_size, duration))
+
+                    recording_id = cursor.lastrowid
+                    conn.commit()
+                finally:
+                    conn.close()
+                    log_slow_operation(
+                        database="recordings",
+                        operation="insert_recording",
+                        started_at=database_started_at,
+                        rows=1,
+                    )
                 logging.info("Database entry created: recording_id=%s", recording_id)
                 log_audio_step("database_insert")
                 
