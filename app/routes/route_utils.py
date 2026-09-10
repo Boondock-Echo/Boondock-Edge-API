@@ -326,7 +326,7 @@ def allowed_file(filename, allowed_extensions=None):
     """Check if the file extension is allowed."""
     if allowed_extensions is None:
         allowed_extensions = {'wav', 'mp3'}
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+    return '.' not in filename or filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
 def load_tags():
     """Load the list of tags from database."""

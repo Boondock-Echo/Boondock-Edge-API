@@ -1,6 +1,7 @@
 import sqlite3
 import json
 from config import Config
+from app.utils.sqlite_utils import connect_sqlite
 
 # Get database path from centralized config
 # Get recordings database path (will use event_name from settings if available)
@@ -11,7 +12,7 @@ def initialize_db():
     # Ensure database directory exists
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_sqlite(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute('''

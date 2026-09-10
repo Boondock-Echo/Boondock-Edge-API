@@ -335,6 +335,12 @@ def main():
             except Exception:
                 pass
 
+        try:
+            from app.services.cloud_device_events import shutdown_cloud_event_writer
+            shutdown_cloud_event_writer()
+        except Exception:
+            pass
+
         logger.info("Application cleanup complete")
 
         # Drain the root logging queue first. DatabaseLoggingHandler may enqueue
