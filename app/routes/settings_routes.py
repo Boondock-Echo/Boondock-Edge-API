@@ -9,6 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+import pytz
 
 from ..routes.route_utils import init_settings
 from ..services.settings_manager import get_settings_manager
@@ -59,17 +60,24 @@ def get_settings():
         return jsonify({'error': str(e)}), 500
 
 
-def _get_utc_day_bounds():
-    """Return the current UTC day's database bounds and date string."""
+def _resolve_timezone_name(explicit_timezone=None):
+        return 'UTC'
+
+
+def _get_local_day_bounds(timezone_name):
+    """Return local-day UTC bounds and local date string for the supplied timezone."""
+    tz = pytz.timezone(timezone_name)
     now_utc = datetime.now(timezone.utc)
-    utc_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    utc_end = utc_start + timedelta(days=1)
+    local_now = now_utc.astimezone(tz)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local_start + timedelta(days=1)
     return {
-        'utc_date': now_utc.strftime('%Y-%m-%d'),
-        'recordings_start_utc': utc_start.strftime('%Y%m%d_%H%M%S'),
-        'recordings_end_utc': utc_end.strftime('%Y%m%d_%H%M%S'),
-        'logs_start': utc_start.strftime('%Y-%m-%d %H:%M:%S'),
-        'logs_end': utc_end.strftime('%Y-%m-%d %H:%M:%S'),
+        'local_date': local_now.strftime('%Y-%m-%d'),
+        'recordings_start_utc': local_start.astimezone(timezone.utc).strftime('%Y%m%d_%H%M%S'),
+        'recordings_end_utc': local_end.astimezone(timezone.utc).strftime('%Y%m%d_%H%M%S'),
+        'logs_start': local_start.strftime('%Y-%m-%d %H:%M:%S'),
+        'logs_end': local_end.strftime('%Y-%m-%d %H:%M:%S'),
+        'timezone': timezone_name,
     }
 
 
@@ -99,6 +107,15 @@ def _summary_cache_set(cache_key, payload):
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Get lightweight dashboard summary metrics',
+    'parameters': [
+        {
+            'name': 'timezone',
+            'in': 'query',
+            'type': 'string',
+            'required': False,
+            'description': 'IANA timezone (defaults to global setting)'
+        }
+    ],
     'responses': {
         '200': {'description': 'Summary metrics returned successfully'},
         '500': {'description': 'Server error'}
@@ -110,8 +127,10 @@ def get_summary_metrics():
     Uses aggregate SQL counts instead of fetching full recordings/log datasets.
     """
     try:
+        requested_tz = request.args.get('timezone')
+        timezone_name = _resolve_timezone_name(requested_tz)
         force_refresh = str(request.args.get('force_refresh', 'false')).lower() == 'true'
-        cache_key = 'UTC'
+        cache_key = timezone_name
 
         if not force_refresh:
             cached_payload = _summary_cache_get(cache_key)
@@ -120,7 +139,7 @@ def get_summary_metrics():
                 payload['is_cached'] = True
                 return jsonify(payload), 200
 
-        bounds = _get_utc_day_bounds()
+        bounds = _get_local_day_bounds(timezone_name)
 
         total_recordings = 0
         today_recordings = 0
@@ -166,7 +185,8 @@ def get_summary_metrics():
         user_logins = 0
         try:
             users = _settings_manager.get_all_users()
-            today_str = bounds['utc_date']
+            tz = pytz.timezone(timezone_name)
+            today_str = bounds['local_date']
             for email, user_data in users.items():
                 if not (isinstance(user_data, dict) and (user_data.get('name') or user_data.get('role') or user_data.get('email') or email)):
                     continue
@@ -182,7 +202,7 @@ def get_summary_metrics():
                         dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=timezone.utc)
-                        if dt.astimezone(timezone.utc).strftime('%Y-%m-%d') == today_str:
+                        if dt.astimezone(tz).strftime('%Y-%m-%d') == today_str:
                             user_logins += 1
                     except Exception:
                         continue
@@ -196,7 +216,8 @@ def get_summary_metrics():
             'warnings': warnings,
             'user_logins': user_logins,
             'total_users': total_users,
-            'utc_date': bounds['utc_date'],
+            'timezone': bounds['timezone'],
+            'local_date': bounds['local_date'],
             'cached_for_seconds': SUMMARY_METRICS_CACHE_TTL_SECONDS,
             'is_cached': False,
         }
@@ -205,7 +226,6 @@ def get_summary_metrics():
     except Exception as e:
         logging.error(f"Error building summary metrics: {e}")
         return jsonify({'error': 'Failed to get summary metrics'}), 500
-
 
 @settings_bp.route('/settings', methods=['PUT'])
 @swag_from({
