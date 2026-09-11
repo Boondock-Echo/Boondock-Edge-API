@@ -565,7 +565,7 @@ def backup_db_folder():
             return
         
         # Get weekday name (Monday, Tuesday, etc.)
-        weekday_name = datetime.now().strftime('%A').lower()
+        weekday_name = datetime.now(timezone.utc).strftime('%A').lower()
         s3_prefix = f"backups/db/{weekday_name}/"
         log.info(f"Using S3 prefix: {s3_prefix}")
         
@@ -666,7 +666,7 @@ def backup_logs_folder():
             return
         
         # Use today's date for log backup folder
-        date_str = datetime.now().strftime('%Y-%m-%d')
+        date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         s3_prefix = f"backups/logs/{date_str}/"
         
         log.info(f"Backing up {len(log_files)} log files to {s3_prefix}")
@@ -721,7 +721,7 @@ def backup_db_folder_to_samba(samba_settings: dict):
         log.warning(f"DB directory not found at {db_dir.absolute()}, skipping Samba DB backup")
         return
 
-    weekday_name = datetime.now().strftime('%A').lower()
+    weekday_name = datetime.now(timezone.utc).strftime('%A').lower()
     samba_prefix = f"backups/db/{weekday_name}/"
     log.info(f"Using Samba prefix: {samba_prefix}")
 
@@ -769,7 +769,7 @@ def backup_logs_folder_to_samba(samba_settings: dict):
         log.info("No log files found, skipping Samba logs backup")
         return
 
-    date_str = datetime.now().strftime('%Y-%m-%d')
+    date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     samba_prefix = f"backups/logs/{date_str}/"
 
     _backup_progress['total_files'] += len(log_files)
@@ -1013,7 +1013,7 @@ def run_backup_job(manual=False, backup_type='incremental', destination='both'):
     
     log.info("Resetting backup progress...")
     reset_backup_progress()
-    start_time = datetime.now()
+    start_time = datetime.now(timezone.utc)
     _backup_progress['status'] = 'running'
     _backup_progress['start_time'] = start_time.isoformat()
     _backup_progress['end_time'] = None
@@ -1159,7 +1159,7 @@ def run_backup_job(manual=False, backup_type='incremental', destination='both'):
 
         log.info("-" * 60)
         log.info("All backup steps completed")
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         duration = (end_time - start_time).total_seconds()
         _backup_progress['status'] = 'completed'
         _backup_progress['end_time'] = end_time.isoformat()
@@ -1190,7 +1190,7 @@ def run_backup_job(manual=False, backup_type='incremental', destination='both'):
         log.error("BACKUP JOB FAILED")
         log.error("=" * 60)
         log.error(f"ERROR: {str(e)}", exc_info=True)
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         duration = (end_time - start_time).total_seconds()
         _backup_progress['status'] = 'error'
         _backup_progress['end_time'] = end_time.isoformat()

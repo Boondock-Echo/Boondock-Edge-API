@@ -30,7 +30,6 @@ DEFAULT_SETTINGS = {
     "transcription_endpoint": "https://api.boondock.cloud",
     "api_health_url": "https://api.boondock.cloud/health",
     "api_transcription_url": "https://api.boondock.cloud/transcribe/",
-    "global_timezone": "UTC",
     "keywords": ["emergency", "fire", "police", "medical", "police", "medical", "police", "medical"],
     "global_min_record_secs": 1,
     "global_max_record_secs": 30,
@@ -300,4 +299,3 @@ if __name__ == "__main__":
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     initialize_settings_database()
-

@@ -11,7 +11,6 @@ import subprocess
 import io
 import time
 import uuid
-import pytz
 from config import DATA_ROOT
 from datetime import datetime, timezone
 from flask import Blueprint, after_this_request, jsonify, request, send_file
@@ -1358,13 +1357,13 @@ def upload_audio_s3():
         try:
             utc_now = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             if utc_now.tzinfo is None:
-                utc_now = pytz.UTC.localize(utc_now)
+                utc_now = utc_now.replace(tzinfo=timezone.utc)
         except Exception:
             logging.warning("Invalid timestamp format: %s", timestamp_str)
             log_audio_step("upload_metadata")
             return jsonify({"error": "Invalid timestamp format; use ISO 8601"}), 400
     else:
-        utc_now = datetime.now(pytz.UTC)
+        utc_now = datetime.now(timezone.utc)
     log_audio_step("upload_metadata")
 
     # 3. ---- Token-vs-MAC validation (unchanged) --------------------------------
@@ -1534,7 +1533,7 @@ def upload_audio_s3():
                 try:
                     cursor = conn.cursor()
 
-                    db_timestamp = datetime.now(pytz.UTC).strftime('%Y%m%d_%H%M%S')
+                    db_timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
                     relative_path = absolute_path.relative_to(DATA_ROOT).as_posix()
                     cursor.execute('''
                         INSERT INTO recordings (channel_id, filename, timestamp, transcription, status, is_duplicate, crc, filesize, duration)
@@ -2007,7 +2006,7 @@ def save_device_settings():
     except Exception as e:
         return jsonify({'error': f'Failed to save settings: {str(e)}'}), 500
 
-    utc_now = datetime.now(pytz.UTC)
+    utc_now = datetime.now(timezone.utc)
     log_message = f"Settings saved - Device: {mac_address}, Filepath: {filepath}"
     logging.info(log_message)
 

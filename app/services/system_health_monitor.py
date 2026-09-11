@@ -13,7 +13,7 @@ import platform
 import shutil
 import os
 from config import Config, DATA_ROOT
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List, Any
 from collections import deque
 
@@ -67,7 +67,7 @@ _last_reset_date = None
 
 def _get_today_key() -> str:
     """Get today's date as YYYY-MM-DD string."""
-    return datetime.now().strftime('%Y-%m-%d')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
 
 def _reset_peaks_if_new_day():
@@ -179,7 +179,7 @@ def _collect_metrics():
                 'disk_used_bytes': disk_used,
                 'disk_free_bytes': disk_free,
                 'disk_percent': disk_percent,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             })
             
             # Add to history for averages
@@ -495,7 +495,7 @@ def get_current_metrics() -> Dict[str, Any]:
         'current': current,
         'peaks': peaks,
         'averages': averages,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(timezone.utc).isoformat()
     }
 
 

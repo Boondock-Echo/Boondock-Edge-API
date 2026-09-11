@@ -14,7 +14,7 @@ import sqlite3
 import logging
 import shutil
 from config import Config, DATA_ROOT
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, List
 
@@ -112,7 +112,7 @@ class MaintenanceService:
         """
         task_id = TASK_ID_BACKUP
         description = TASK_DESCRIPTIONS[task_id]
-        started_at = datetime.now()
+        started_at = datetime.now(timezone.utc)
         
         log.info(f"Starting maintenance task: {description}")
         
@@ -120,7 +120,7 @@ class MaintenanceService:
             # Run backup job (incremental, both destinations)
             run_backup_job(manual=False, backup_type='incremental', destination='both')
             
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             duration = (completed_at - started_at).total_seconds()
             
             details = json.dumps({
@@ -148,7 +148,7 @@ class MaintenanceService:
             }
             
         except Exception as e:
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             error_msg = str(e)
             
             self._log_maintenance_task(
@@ -179,7 +179,7 @@ class MaintenanceService:
         """
         task_id = TASK_ID_LOGS_CLEANUP
         description = TASK_DESCRIPTIONS[task_id]
-        started_at = datetime.now()
+        started_at = datetime.now(timezone.utc)
         
         log.info(f"Starting maintenance task: {description}")
         
@@ -187,7 +187,7 @@ class MaintenanceService:
             # Run log cleanup
             result = cleanup_old_logs()
             
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             duration = (completed_at - started_at).total_seconds()
             
             details = json.dumps({
@@ -219,7 +219,7 @@ class MaintenanceService:
             }
             
         except Exception as e:
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             error_msg = str(e)
             
             self._log_maintenance_task(
@@ -339,7 +339,7 @@ class MaintenanceService:
         """
         task_id = TASK_ID_HEALTH_CHECKS
         description = TASK_DESCRIPTIONS[task_id]
-        started_at = datetime.now()
+        started_at = datetime.now(timezone.utc)
         
         log.info(f"Starting maintenance task: {description}")
         
@@ -404,12 +404,12 @@ class MaintenanceService:
                 (checked_at, database_sizes, top_tables, disk_usage, details)
                 VALUES (?, ?, ?, ?, ?)
             ''', (
-                datetime.now().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 json.dumps(database_sizes),
                 json.dumps(top_tables),
                 json.dumps(disk_usage_info),
                 json.dumps({
-                    'checked_at': datetime.now().isoformat(),
+                    'checked_at': datetime.now(timezone.utc).isoformat(),
                     'summary': {
                         'total_databases': len(database_sizes),
                         'total_tables_checked': sum(len(tables) for tables in top_tables.values())
@@ -420,7 +420,7 @@ class MaintenanceService:
             logs_db_conn.commit()
             logs_db_conn.close()
             
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             duration = (completed_at - started_at).total_seconds()
             
             details = json.dumps({
@@ -452,7 +452,7 @@ class MaintenanceService:
             }
             
         except Exception as e:
-            completed_at = datetime.now()
+            completed_at = datetime.now(timezone.utc)
             error_msg = str(e)
             
             self._log_maintenance_task(
@@ -493,12 +493,12 @@ class MaintenanceService:
         log.info("=" * 60)
         
         results = {}
-        overall_started_at = datetime.now()
+        overall_started_at = datetime.now(timezone.utc)
         MAX_RUNTIME_SECONDS = 3600  # 1 hour
         
         # Run each enabled task with timeout check
         if TASK_ID_BACKUP in enabled_tasks:
-            elapsed = (datetime.now() - overall_started_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - overall_started_at).total_seconds()
             if elapsed >= MAX_RUNTIME_SECONDS:
                 log.warning(f"Maintenance timeout reached ({elapsed:.2f}s), skipping remaining tasks")
                 results[TASK_ID_BACKUP] = {
@@ -508,20 +508,20 @@ class MaintenanceService:
                 }
             else:
                 results[TASK_ID_BACKUP] = self.run_backup_task()
-                elapsed = (datetime.now() - overall_started_at).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - overall_started_at).total_seconds()
                 if elapsed >= MAX_RUNTIME_SECONDS:
                     log.warning(f"Maintenance timeout reached ({elapsed:.2f}s), stopping remaining tasks")
                     return {
                         'overall_status': 'timeout',
                         'overall_duration_seconds': elapsed,
                         'started_at': overall_started_at.isoformat(),
-                        'completed_at': datetime.now().isoformat(),
+                        'completed_at': datetime.now(timezone.utc).isoformat(),
                         'tasks': results,
                         'message': 'Maintenance tasks stopped due to 1-hour timeout'
                     }
         
         if TASK_ID_LOGS_CLEANUP in enabled_tasks:
-            elapsed = (datetime.now() - overall_started_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - overall_started_at).total_seconds()
             if elapsed >= MAX_RUNTIME_SECONDS:
                 log.warning(f"Maintenance timeout reached ({elapsed:.2f}s), skipping remaining tasks")
                 results[TASK_ID_LOGS_CLEANUP] = {
@@ -531,20 +531,20 @@ class MaintenanceService:
                 }
             else:
                 results[TASK_ID_LOGS_CLEANUP] = self.run_logs_cleanup_task()
-                elapsed = (datetime.now() - overall_started_at).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - overall_started_at).total_seconds()
                 if elapsed >= MAX_RUNTIME_SECONDS:
                     log.warning(f"Maintenance timeout reached ({elapsed:.2f}s), stopping remaining tasks")
                     return {
                         'overall_status': 'timeout',
                         'overall_duration_seconds': elapsed,
                         'started_at': overall_started_at.isoformat(),
-                        'completed_at': datetime.now().isoformat(),
+                        'completed_at': datetime.now(timezone.utc).isoformat(),
                         'tasks': results,
                         'message': 'Maintenance tasks stopped due to 1-hour timeout'
                     }
         
         if TASK_ID_HEALTH_CHECKS in enabled_tasks:
-            elapsed = (datetime.now() - overall_started_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - overall_started_at).total_seconds()
             if elapsed >= MAX_RUNTIME_SECONDS:
                 log.warning(f"Maintenance timeout reached ({elapsed:.2f}s), skipping remaining tasks")
                 results[TASK_ID_HEALTH_CHECKS] = {
@@ -555,7 +555,7 @@ class MaintenanceService:
             else:
                 results[TASK_ID_HEALTH_CHECKS] = self.run_health_checks_task()
         
-        overall_completed_at = datetime.now()
+        overall_completed_at = datetime.now(timezone.utc)
         overall_duration = (overall_completed_at - overall_started_at).total_seconds()
         
         log.info("=" * 60)

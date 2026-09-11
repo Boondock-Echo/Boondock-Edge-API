@@ -13,7 +13,7 @@ import threading
 import queue
 from config import Config
 from typing import Optional, Dict, List, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Get the database directory from centralized config
@@ -307,7 +307,7 @@ class DatabaseLoggingManager:
             log_type = 'app'  # Default to app logs
         
         table_name = LOG_TYPES[log_type]
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         
         log_record = {
             'table_name': table_name,

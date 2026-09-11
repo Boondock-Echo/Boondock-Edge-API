@@ -382,48 +382,27 @@ def load_settings():
         return _settings_manager.get_all_settings()
     except Exception as e:
         error_logger.error(f"Error loading settings from database: {str(e)}")
-        return {"global_timezone": "UTC"}
+        return {}
 
-def get_timezone():
-    """Get the global timezone from settings."""
-    settings = load_settings()
-    return settings.get("global_timezone", "UTC")
-
-def convert_to_timezone(timestamp_str, target_timezone=None):
-    """Convert a timestamp string to the specified timezone."""
-    import pytz
-    if not target_timezone:
-        target_timezone = get_timezone()
-    
+def format_utc_timestamp(timestamp_value):
+    """Normalize a datetime or timestamp string and format it explicitly as UTC."""
     try:
-        # If it's already a datetime object
-        if isinstance(timestamp_str, datetime):
-            dt = timestamp_str
-        elif isinstance(timestamp_str, str):
-            # Check if it's already in local format (YYYY-MM-DD HH:MM:SS)
-            if len(timestamp_str) == 19 and timestamp_str.count('-') == 2 and timestamp_str.count(':') == 2:
-                # Assume naive timestamps are in UTC (since we save in UTC)
-                dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+        if isinstance(timestamp_value, datetime):
+            dt = timestamp_value
+        elif isinstance(timestamp_value, str):
+            if len(timestamp_value) == 19 and timestamp_value.count('-') == 2 and timestamp_value.count(':') == 2:
+                dt = datetime.strptime(timestamp_value, '%Y-%m-%d %H:%M:%S')
                 dt = dt.replace(tzinfo=timezone.utc)
             else:
-                # Try to parse as ISO format (UTC)
-                dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
         else:
-            dt = timestamp_str
-        
-        # Convert to target timezone
-        target_tz = pytz.timezone(target_timezone)
+            dt = timestamp_value
         if dt.tzinfo is None:
-            # If no timezone info, assume it's in UTC
             dt = dt.replace(tzinfo=timezone.utc)
-            localized_dt = dt.astimezone(target_tz)
-        else:
-            localized_dt = dt.astimezone(target_tz)
-        
-        return localized_dt.strftime('%Y-%m-%d %H:%M:%S %Z')
+        return dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     except Exception as e:
-        print(f"Error converting timezone: {e}")
-        return timestamp_str
+        print(f"Error formatting UTC timestamp: {e}")
+        return timestamp_value
 
 # Pagination preferences
 def load_pagination_preferences():
@@ -561,7 +540,7 @@ def create_history_entry(recording_id, transcription, audio_filename=None, descr
         conn.close()
 
 def get_history_versions(recording_id):
-    """Get all history versions for a recording with timezone conversion."""
+    """Get all history versions with timestamps formatted in UTC."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     
@@ -574,19 +553,14 @@ def get_history_versions(recording_id):
         
         history = []
         for row in rows:
-            # Convert timestamp to timezone
-            created_at = row[4]
-            if created_at:
-                created_at_tz = convert_to_timezone(created_at)
-            else:
-                created_at_tz = created_at
+            created_at = format_utc_timestamp(row[4]) if row[4] else row[4]
             
             history.append({
                 'id': row[0],
                 'version_number': row[1],
                 'transcription': row[2],
                 'audio_filename': row[3],
-                'created_at': created_at_tz,
+                'created_at': created_at,
                 'description': row[5]
             })
         
@@ -677,4 +651,3 @@ def init_users():
     """Initialize users in database if they don't exist"""
     # Users are initialized as part of database initialization
     pass
-

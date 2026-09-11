@@ -12,7 +12,7 @@ import threading
 import time
 from config import Config
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from serial import Serial, SerialException
 from serial.serialutil import SerialTimeoutException
@@ -66,7 +66,7 @@ def _get_log_file_path(port):
     New format (aligned with other logs):
         logs/YYYY/MM/YYYY-MM-DD_<PORT>.log
     """
-    today = datetime.now().date()
+    today = datetime.now(timezone.utc).date()
 
     year = today.strftime('%Y')
     month = today.strftime('%m')
@@ -212,7 +212,7 @@ def _log_message(port, message):
         # Mirror to daily port file so /api/recorders/logs (DEVICES tab) stays in sync
         try:
             log_path = _get_log_file_path(port)
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"[{timestamp}] {message}\n")
         except Exception as file_exc:
@@ -221,7 +221,7 @@ def _log_message(port, message):
         # Fallback to file logging if database logging fails
         try:
             log_path = _get_log_file_path(port)
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"[{timestamp}] {message}\n")
         except Exception as file_exc:
@@ -586,7 +586,7 @@ def _process_parsed_message(port, json_data, timestamp):
 
 def _add_message(port, message):
     """Add a message to the in-memory buffer and log it."""
-    timestamp = datetime.now()
+    timestamp = datetime.now(timezone.utc)
     local_time_str = timestamp.strftime('%H:%M:%S')  # Only time, no date
     
     message_entry = {

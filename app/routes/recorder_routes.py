@@ -6,7 +6,7 @@ import threading
 import time
 from config import DATA_ROOT
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 import subprocess
 import shutil
 from pathlib import Path
@@ -1426,7 +1426,7 @@ def get_recorder_logs():
         if date_str:
             target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         else:
-            target_date = datetime.now().date()
+            target_date = datetime.now(timezone.utc).date()
             date_str = target_date.strftime('%Y-%m-%d')
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400

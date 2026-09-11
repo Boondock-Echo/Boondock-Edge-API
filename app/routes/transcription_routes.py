@@ -13,7 +13,6 @@ from ..utils.logging_setup import error_logger
 from ..services.transcription_service import request_openai_transcription
 from ..routes.route_utils import (
     DB_PATH,
-    get_timezone,
     create_history_entry,
 )
 
@@ -131,13 +130,9 @@ def update_transcription(message_id):
         )
         conn.commit()
 
-        # Get timezone info for response
-        timezone_info = get_timezone()
-        
         return jsonify({
             'recording_id': message_id,
             'transcription': transcription,
-            'timezone': timezone_info,
             'message': 'Transcription updated' + (' and audio replaced successfully' if 'croppedAudio' in request.files else '')
         }), 200
 

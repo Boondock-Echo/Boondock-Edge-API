@@ -7,7 +7,7 @@ to users in the dashboard. Supports temporary, sticky, and stacked notification 
 
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from collections import deque
 from enum import Enum
@@ -62,7 +62,7 @@ def _check_cpu_usage():
             return
         
         cpu_percent = metrics.get('cpu_percent', 0)
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         
         if cpu_percent > 90:
             if _cpu_high_start_time is None:
@@ -116,7 +116,7 @@ def _check_disk_usage():
                 'mode': NotificationMode.STICKY.value,
                 'title': 'Disk Space Critical',
                 'message': f'Disk usage is {disk_percent:.1f}%. Free up space immediately.',
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'data': {
                     'disk_percent': disk_percent
                 }
@@ -139,7 +139,7 @@ def _check_device_disconnections():
         if not stats:
             return
         
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         connection_loss_threshold = 300  # 5 minutes
         
         for device in stats:
@@ -231,7 +231,7 @@ def create_channel_creation_notification(mac_address: str, channel_name: Optiona
         'mode': NotificationMode.TEMPORARY.value,
         'title': 'New Channel Created',
         'message': f'Auto-created channel for MAC address {mac_address}' + (f' ({channel_name})' if channel_name else ''),
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'data': {
             'mac_address': mac_address,
             'channel_name': channel_name

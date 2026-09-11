@@ -5,7 +5,7 @@ Tracks recording/idle/error/warning states for visual feedback without persistin
 import threading
 import time
 from typing import Dict, Optional, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .settings_manager import normalize_mac_address
 
@@ -58,7 +58,7 @@ def set_channel_visual_state(mac_address: str, state: str) -> None:
     with _state_lock:
         _channel_states[mac] = {
             "state": state,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
 

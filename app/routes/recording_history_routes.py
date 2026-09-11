@@ -13,8 +13,7 @@ from ..routes.route_utils import (
     RECORDINGS_DIR,
     get_history_versions,
     revert_to_version,
-    convert_to_timezone,
-    get_timezone,
+    format_utc_timestamp,
 )
 
 history_bp = Blueprint('history', __name__)
@@ -42,14 +41,10 @@ def get_recording_history(recording_id):
     """Get all history versions for a recording."""
     try:
         history = get_history_versions(recording_id)
-        # Get timezone info for response
-        timezone_info = get_timezone()
-        
         return jsonify({
             'recording_id': recording_id,
             'history': history,
-            'total_versions': len(history),
-            'timezone': timezone_info
+            'total_versions': len(history)
         }), 200
     except Exception as e:
         return jsonify({'error': f'Failed to get history: {str(e)}'}), 500
@@ -96,19 +91,14 @@ def get_history_version(recording_id, version_number):
         if not row:
             return jsonify({'error': f'Version {version_number} not found'}), 404
         
-        # Convert timestamp to timezone
-        created_at = row[2]
-        if created_at:
-            created_at_tz = convert_to_timezone(created_at)
-        else:
-            created_at_tz = created_at
+        created_at = format_utc_timestamp(row[2]) if row[2] else row[2]
         
         return jsonify({
             'recording_id': recording_id,
             'version_number': version_number,
             'transcription': row[0],
             'audio_filename': row[1],
-            'created_at': created_at_tz,
+            'created_at': created_at,
             'description': row[3]
         }), 200
         

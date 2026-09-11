@@ -7,7 +7,7 @@ Logging is asynchronous to prevent blocking the main application thread.
 """
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from app.utils.db_logging_handler import DatabaseLoggingHandler
 
@@ -29,7 +29,7 @@ class DailyRotatingFileHandler(logging.Handler):
     def _get_log_path(self, date=None):
         """Get the log file path for a given date (or current date if None)"""
         if date is None:
-            date = datetime.now()
+            date = datetime.now(timezone.utc)
         elif isinstance(date, str):
             date = datetime.strptime(date, '%Y-%m-%d')
         
@@ -44,7 +44,7 @@ class DailyRotatingFileHandler(logging.Handler):
     
     def _setup_handler(self):
         """Setup the file handler for the current date"""
-        current_date = datetime.now().date()
+        current_date = datetime.now(timezone.utc).date()
         
         # If date hasn't changed, keep using the same file
         if self.current_date == current_date and self.file_handler is not None:
@@ -82,7 +82,7 @@ class DailyRotatingFileHandler(logging.Handler):
     def emit(self, record):
         """Emit a log record, checking if we need to rotate to a new day"""
         # Check if date has changed
-        current_date = datetime.now().date()
+        current_date = datetime.now(timezone.utc).date()
         if self.current_date != current_date:
             self._setup_handler()
         

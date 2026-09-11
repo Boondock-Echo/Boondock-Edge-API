@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 from config import Config
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List, Any
 from collections import defaultdict
 
@@ -61,7 +61,7 @@ _running = False
 
 def _get_today_key() -> str:
     """Get today's date as YYYY-MM-DD string."""
-    return datetime.now().strftime('%Y-%m-%d')
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
 
 def _initialize_database():
@@ -157,7 +157,7 @@ def _persist_to_database():
                             stats.get('total_uptime_seconds', 0),
                             stats.get('first_activity'),
                             stats.get('last_activity'),
-                            datetime.now().isoformat(),
+                            datetime.now(timezone.utc).isoformat(),
                             mac,
                             date
                         ))
@@ -215,17 +215,17 @@ def _check_connection_loss():
                             # Increment only if this is a new loss period (last check was within threshold)
                             stats['connection_loss_count'] += 1
                             # Update to mark that we've counted this loss
-                            stats['last_activity'] = datetime.now().isoformat()
+                            stats['last_activity'] = datetime.now(timezone.utc).isoformat()
                             _last_activity[mac] = current_time
                     except (ValueError, TypeError):
                         # If parsing fails, just update the count
                         stats['connection_loss_count'] += 1
-                        stats['last_activity'] = datetime.now().isoformat()
+                        stats['last_activity'] = datetime.now(timezone.utc).isoformat()
                         _last_activity[mac] = current_time
                 else:
                     # No last_activity recorded, count as loss
                     stats['connection_loss_count'] += 1
-                    stats['last_activity'] = datetime.now().isoformat()
+                    stats['last_activity'] = datetime.now(timezone.utc).isoformat()
                     _last_activity[mac] = current_time
 
 
@@ -299,10 +299,10 @@ def track_device_created(mac: str):
     with _stats_lock:
         stats = _health_stats[mac][today]
         if not stats.get('device_created_at'):
-            stats['device_created_at'] = datetime.now().isoformat()
+            stats['device_created_at'] = datetime.now(timezone.utc).isoformat()
             # Also set first activity if not set
             if not stats.get('first_activity'):
-                stats['first_activity'] = datetime.now().isoformat()
+                stats['first_activity'] = datetime.now(timezone.utc).isoformat()
             _last_activity[mac] = time.time()
 
 
@@ -319,7 +319,7 @@ def track_connection(mac: str):
         stats = _health_stats[mac][today]
         stats["connection_count"] += 1
 
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         if not stats.get("first_activity"):
             stats["first_activity"] = now_iso
         stats["last_activity"] = now_iso
@@ -327,7 +327,7 @@ def track_connection(mac: str):
 
         if stats.get("first_activity"):
             first_activity = datetime.fromisoformat(stats["first_activity"])
-            uptime = (datetime.now() - first_activity).total_seconds()
+            uptime = (datetime.now(timezone.utc) - first_activity).total_seconds()
             stats["total_uptime_seconds"] = int(uptime)
 
 
@@ -344,7 +344,7 @@ def track_event(mac: str):
         stats['event_count'] += 1
         
         # Update activity times
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         if not stats.get('first_activity'):
             stats['first_activity'] = now_iso
         stats['last_activity'] = now_iso
@@ -353,7 +353,7 @@ def track_event(mac: str):
         # Update uptime
         if stats.get('first_activity'):
             first_activity = datetime.fromisoformat(stats['first_activity'])
-            uptime = (datetime.now() - first_activity).total_seconds()
+            uptime = (datetime.now(timezone.utc) - first_activity).total_seconds()
             stats['total_uptime_seconds'] = int(uptime)
 
 
@@ -370,7 +370,7 @@ def track_file_upload(mac: str):
         stats['file_upload_count'] += 1
         
         # Update activity times
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
         if not stats.get('first_activity'):
             stats['first_activity'] = now_iso
         stats['last_activity'] = now_iso
@@ -379,7 +379,7 @@ def track_file_upload(mac: str):
         # Update uptime
         if stats.get('first_activity'):
             first_activity = datetime.fromisoformat(stats['first_activity'])
-            uptime = (datetime.now() - first_activity).total_seconds()
+            uptime = (datetime.now(timezone.utc) - first_activity).total_seconds()
             stats['total_uptime_seconds'] = int(uptime)
 
 
