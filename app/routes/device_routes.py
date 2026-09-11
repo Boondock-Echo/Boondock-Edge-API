@@ -1093,6 +1093,7 @@ def device_cloud_events_list(mac):
 
 @device_bp.route('/v1/audio/s3', methods=['POST'])
 @device_bp.route('/v2/audio/s3', methods=['POST'])
+@device_bp.route('/upload/audio', methods=['POST'])
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Upload an audio file to S3 (v1: default WAV; v2: default MP3)',
@@ -1199,34 +1200,17 @@ def upload_audio_s3():
         """Log both the current step and cumulative request duration."""
         nonlocal previous_log_duration_ms, step_started_at
         now = time.perf_counter()
-        step_log = (
-            step,
-            (now - step_started_at) * 1000,
-            (now - request_started_at) * 1000,
-            previous_log_duration_ms,
-        )
-        if audio_filename is None:
-            # Accessing request.files here would parse (and potentially wait for)
-            # the entire multipart body. Keep the measurement, then emit it once
-            # form parsing has supplied the filename.
-            deferred_step_logs.append(step_log)
-            step_started_at = now
-            previous_log_duration_ms = 0.0
-            return
 
-        logs_to_emit = [*deferred_step_logs, step_log]
-        deferred_step_logs.clear()
-        for logged_step, step_duration, total_duration, prior_log_duration in logs_to_emit:
+        if(previous_log_duration_ms > 1000 or (now - step_started_at) > 1000):
             logging.info(
-                "audio_s3_step_performance request_id=%s file=%s step=%s "
+                "audio_s3_step_performance request_id=%s step=%s "
                 "step_duration_ms=%.2f total_duration_ms=%.2f "
                 "previous_log_duration_ms=%.2f",
                 request_id,
-                audio_filename,
-                logged_step,
-                step_duration,
-                total_duration,
-                prior_log_duration,
+                step,
+                (now - step_started_at) * 1000,
+                (now - request_started_at) * 1000,
+                previous_log_duration_ms,
             )
         # Start the next step after the log record has been emitted. Logging can
         # block on the configured handler (for example journald), and charging
@@ -1290,21 +1274,19 @@ def upload_audio_s3():
     # 2. ---- Validate form data -------------------------------------------------
     # Wrap form data access in try-except to handle connection errors gracefully
     try:
-        form_data = request.form
-        uploaded_files = request.files
-        uploaded_audio = uploaded_files.get("audio_file")
-        audio_filename = uploaded_audio.filename if uploaded_audio is not None else "Error"
-        if "mac_address" not in form_data or uploaded_audio is None:
+        if "mac_address" not in request.form or "audio_file" not in request.files:
             logging.warning("Missing mac_address or audio_file in request")
             log_audio_request()
-            log_audio_step("multipart_parsing")
+            log_audio_step("form_parsing")
             return (
                 jsonify({"error": "Missing required fields (mac_address and audio_file)"}),
                 400,
             )
-        
-        mac_address = form_data["mac_address"]
-        audio_file = uploaded_audio
+
+        mac_address = request.form["mac_address"]
+        audio_file = request.files["audio_file"]
+        log_audio_step("form_parsing")
+        audio_filename = audio_file.filename if audio_file is not None else "Error"
         log_audio_request()
         log_audio_step("multipart_parsing")
     except (OSError, ConnectionResetError, ConnectionError) as e:
@@ -1454,7 +1436,6 @@ def upload_audio_s3():
     # assigned after local collision handling so local and S3 names stay aligned.
     mac_folder = mac_address.lower()
     ext = "mp3" if convert_to_mp3 else "wav"
-    filename = uploaded_filename
 
     # Prepare for local save and S3 upload
     local_file_saved = False

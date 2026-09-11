@@ -211,7 +211,7 @@ def start_queue():
         return jsonify({'error': str(e)}), 500
 
 
-@recordings_bp.route('/queue/stop', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/stop', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Stop the transcription queue processor',
@@ -222,13 +222,13 @@ def start_queue():
 })
 def stop_queue():
     """Stop the transcription queue so it no longer processes tasks."""
-    if request.method == 'OPTIONS':
-        response = jsonify({'message': 'OK'})
-        response.headers['Content-Type'] = 'application/json'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response, 200
+    # if request.method == 'OPTIONS':
+    #     response = jsonify({'message': 'OK'})
+    #     response.headers['Content-Type'] = 'application/json'
+    #     response.headers['Access-Control-Allow-Origin'] = '*'
+    #     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    #     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    #     return response, 200
     try:
         audio_handler = get_audio_handler()
         if not audio_handler:
