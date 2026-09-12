@@ -242,16 +242,6 @@ def main():
     except Exception as e:
         logger.debug(f"Maintenance scheduler failed: {e}")
     
-    # Set LED online status if enabled
-    if led_enabled:
-        try:
-            from app.services.led_status_service import get_led_status_service
-            led_service = get_led_status_service()
-            led_service.set_online()
-            led_service.start_inactivity_monitor()
-        except Exception as e:
-            logger.debug(f"LED online status failed: {e}")
-    
     # Start server
     host = Config.FLASK_HOST
     port = Config.FLASK_PORT
