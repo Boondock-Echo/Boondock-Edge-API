@@ -47,7 +47,6 @@ def migrate_json_to_sqlite():
         'recorders_inventory.json': os.path.join(_DB_DIR, 'recorders_inventory.json'),
         'firmware_metadata.json': os.path.join(_DB_DIR, 'firmware_metadata.json'),
         'queue.json': os.path.join(_DB_DIR, 'queue.json'),
-        'gpio_config.json': os.path.join(_DB_DIR, 'gpio_config.json'),
     }
     
     # Migrate settings.json
@@ -280,19 +279,7 @@ def migrate_json_to_sqlite():
         except Exception as e:
             logger.error(f"✗ Error migrating queue.json: {e}")
             error_count += 1
-    
-    # Migrate gpio_config.json
-    if os.path.exists(json_files['gpio_config.json']):
-        try:
-            with open(json_files['gpio_config.json'], 'r', encoding='utf-8') as f:
-                gpio_data = json.load(f)
-            settings_manager.save_gpio_config(gpio_data)
-            logger.info("✓ Migrated gpio_config.json")
-            migrated_count += 1
-        except Exception as e:
-            logger.error(f"✗ Error migrating gpio_config.json: {e}")
-            error_count += 1
-    
+
     logger.info("=" * 60)
     logger.info(f"Migration complete: {migrated_count} files migrated, {error_count} errors")
     logger.info("=" * 60)

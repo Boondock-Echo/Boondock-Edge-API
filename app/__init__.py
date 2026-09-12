@@ -86,7 +86,6 @@ def create_app(config_class=Config):
     from app.routes.users_routes import users_bp
     from app.routes.profiles_routes import profiles_bp
     from app.routes.s3_routes import s3_bp
-    from app.routes.gpio_routes import gpio_bp
     from app.routes.hotspot_routes import hotspot_bp
     from app.routes.settings_routes import settings_bp
     from app.routes.hallucinations_routes import hallucinations_bp
@@ -140,7 +139,6 @@ def create_app(config_class=Config):
     app.register_blueprint(external_api_bp, url_prefix='/api')
     app.register_blueprint(recorders_bp, url_prefix='/api/recorders')
     app.register_blueprint(logs_bp, url_prefix='/api/')
-    app.register_blueprint(gpio_bp, url_prefix='/api')
     app.register_blueprint(radio_bp, url_prefix='/api/radio')
 
 

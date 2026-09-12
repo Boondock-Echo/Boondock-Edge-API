@@ -26,8 +26,6 @@ LOGGER = logging.getLogger("boondock.setup")
 DEVICE_SETTINGS = {
     "boondock_edge": "global_enable_edge_devices",
     "uniden_scanner": "global_enable_uniden_scanners",
-    "usb_audio": "global_enable_usb_audio_devices",
-    "gpio": "global_enable_gpio",
 }
 INBOX_VIEWS = {"continuous", "pagination"}
 MESSAGE_SORTING = {"newest", "oldest"}
