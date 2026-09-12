@@ -183,7 +183,7 @@ def get_transcription(message_id):
         conn.close()
 
 
-@transcription_bp.route('/transcribe', methods=['POST', 'OPTIONS'])
+@transcription_bp.route('/transcribe', methods=['POST'])
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Transcribe audio file (proxy to external API)',
@@ -205,14 +205,6 @@ def get_transcription(message_id):
     }
 })
 def transcribe_proxy():
-    # Handle CORS preflight request
-    if request.method == 'OPTIONS':
-        response = jsonify({'message': 'CORS preflight'})
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Boondock-Key'
-        return response, 200
-
     # Get the audio file from the request
     audio_file = request.files['file']
 
@@ -263,7 +255,7 @@ def transcribe_proxy():
         return error_resp, 500
 
 
-@transcription_bp.route('/transcribe/<int:record_id>', methods=['POST', 'OPTIONS'], endpoint='transcribe_proxy_audio')
+@transcription_bp.route('/transcribe/<int:record_id>', methods=['POST'], endpoint='transcribe_proxy_audio')
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Transcribe a recording by ID',
@@ -285,14 +277,6 @@ def transcribe_proxy():
     }
 })
 def transcribe_proxy_by_id(record_id):
-    # Handle CORS preflight request
-    if request.method == 'OPTIONS':
-        response = jsonify({'message': 'CORS preflight'})
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Boondock-Key'
-        return response, 200
-
     # Validate record_id
     if record_id <= 0:
         return jsonify({'error': 'Invalid record ID', 'status': 'error'}), 400

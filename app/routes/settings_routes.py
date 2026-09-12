@@ -391,7 +391,7 @@ def update_settings():
         return jsonify({'error': str(e)}), 500
 
 
-@settings_bp.route('/settings/restart-service', methods=['POST', 'OPTIONS'])
+@settings_bp.route('/settings/restart-service', methods=['POST'])
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Restart the Boondock Edge system service',
@@ -407,15 +407,6 @@ def restart_system_service():
     This endpoint is intended to be called from the Settings UI via a restart button.
     """
     try:
-        # Handle CORS preflight / OPTIONS requests
-        if request.method == 'OPTIONS':
-            response = jsonify({'message': 'OK'})
-            response.headers['Content-Type'] = 'application/json'
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-            return response, 200
-
         # Only attempt restart on Linux environments
         if sys.platform != "linux":
             return jsonify({'error': 'Service restart is only supported on Linux targets'}), 500
@@ -443,7 +434,7 @@ def restart_system_service():
         return jsonify({'error': str(e)}), 500
 
 
-@settings_bp.route('/reboot', methods=['POST', 'OPTIONS'])
+@settings_bp.route('/reboot', methods=['POST'])
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Reboot the Boondock Edge application service',
