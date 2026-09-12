@@ -1273,10 +1273,14 @@ def upload_audio_s3():
     # 2. ---- Validate form data -------------------------------------------------
     # Wrap form data access in try-except to handle connection errors gracefully
     try:
-        if "mac_address" not in request.form or "audio_file" not in request.files:
+        form_data = request.form
+        uploaded_files = request.files
+        uploaded_audio = uploaded_files.get("audio_file")
+        audio_filename = uploaded_audio.filename if uploaded_audio is not None else "Error"
+        if "mac_address" not in form_data or uploaded_audio is None:
             logging.warning("Missing mac_address or audio_file in request")
             log_audio_request()
-            log_audio_step("form_parsing")
+            log_audio_step("multipart_parsing")
             return (
                 jsonify({"error": "Missing required fields (mac_address and audio_file)"}),
                 400,
