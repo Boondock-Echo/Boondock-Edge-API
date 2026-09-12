@@ -7,7 +7,6 @@ import sqlite3
 import logging
 import wave
 import re
-import pytz
 from config import DATA_ROOT
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request, send_from_directory, send_file, abort
@@ -22,8 +21,6 @@ from ..routes.route_utils import (
     RECORDINGS_DIR,
     DB_PATH,
     get_channel_details,
-    get_timezone,
-    convert_to_timezone,
     db_lock,
     calculate_wav_duration,
 )
@@ -211,7 +208,7 @@ def start_queue():
         return jsonify({'error': str(e)}), 500
 
 
-@recordings_bp.route('/queue/stop', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/stop', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Stop the transcription queue processor',
@@ -222,13 +219,13 @@ def start_queue():
 })
 def stop_queue():
     """Stop the transcription queue so it no longer processes tasks."""
-    if request.method == 'OPTIONS':
-        response = jsonify({'message': 'OK'})
-        response.headers['Content-Type'] = 'application/json'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response, 200
+    # if request.method == 'OPTIONS':
+    #     response = jsonify({'message': 'OK'})
+    #     response.headers['Content-Type'] = 'application/json'
+    #     response.headers['Access-Control-Allow-Origin'] = '*'
+    #     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    #     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    #     return response, 200
     try:
         audio_handler = get_audio_handler()
         if not audio_handler:
@@ -802,37 +799,20 @@ def get_audio_url(message_id):
         # Get time format preference from query parameter (default to 24h)
         time_format = request.args.get('time_format', '24h')
         
-        # Convert timestamp from YYYYMMDD_HHMMSS (stored in UTC) to local timezone filename
-        # Filename format: {channel_name}_YYYY-MM-DD-HH-MM-SS.wav (local timezone)
-        # Sanitize channel name to be filename-safe
+        # Format the stored UTC timestamp in the download filename.
         safe_channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        utc_filename = f'{safe_channel_name}.wav'  # Fallback
+        utc_filename = f'{safe_channel_name}.wav'
         if timestamp:
             try:
-                # Parse YYYYMMDD_HHMMSS format as UTC
-                dt_utc_naive = datetime.strptime(timestamp, '%Y%m%d_%H%M%S')
-                dt_utc = dt_utc_naive.replace(tzinfo=timezone.utc)
-
-                # Get user timezone from settings (e.g., "Asia/Kolkata")
-                user_timezone = get_timezone()
-                user_tz = pytz.timezone(user_timezone)
-
-                # Convert to user's local timezone
-                local_dt = dt_utc.astimezone(user_tz)
-
+                utc_dt = datetime.strptime(timestamp, '%Y%m%d_%H%M%S').replace(tzinfo=timezone.utc)
                 if time_format == '12h':
-                    # 12-hour format: {channel_name}_YYYY-MM-DD-HH-MM-SS-AM.wav or ...-PM.wav (local time)
-                    hour = local_dt.hour
-                    hour12 = hour % 12 or 12
-                    ampm = 'AM' if hour < 12 else 'PM'
-                    utc_filename = f'{safe_channel_name}_{local_dt.strftime("%Y-%m-%d")}-{hour12:02d}-{local_dt.strftime("%M-%S")}-{ampm}.wav'
+                    hour12 = utc_dt.hour % 12 or 12
+                    ampm = 'AM' if utc_dt.hour < 12 else 'PM'
+                    utc_filename = f'{safe_channel_name}_{utc_dt.strftime("%Y-%m-%d")}-{hour12:02d}-{utc_dt.strftime("%M-%S")}-{ampm}.wav'
                 else:
-                    # 24-hour format: {channel_name}_YYYY-MM-DD-HH-MM-SS.wav (local time)
-                    utc_filename = f'{safe_channel_name}_{local_dt.strftime("%Y-%m-%d-%H-%M-%S")}.wav'
-            except (ValueError, TypeError, Exception) as e:
-                # On any error, fall back to simple channel-based name
-                error_logger.warning(f"Error converting timestamp {timestamp} to timezone filename: {e}")
-                utc_filename = f'{safe_channel_name}.wav'
+                    utc_filename = f'{safe_channel_name}_{utc_dt.strftime("%Y-%m-%d-%H-%M-%S")}.wav'
+            except (ValueError, TypeError) as e:
+                error_logger.warning(f"Error formatting UTC timestamp {timestamp}: {e}")
 
         # Return both the file (as attachment) and the OS full path in JSON
         # If you want to send the file, use send_file; if you want to send JSON, just return the path.
@@ -876,7 +856,7 @@ def get_audio_url_file(message_id):
     """
     Return the audio file for a given recording_id (message_id).
     Responds with the audio file as an attachment if found.
-    The downloaded filename will be converted from UTC to the user's local timezone.
+    The downloaded filename uses the recording's UTC timestamp.
     """
     conn = None
     try:
@@ -908,7 +888,7 @@ def get_audio_url_file(message_id):
         # Sanitize channel name to be filename-safe
         safe_channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
 
-        # Extract UTC timestamp from filename and convert to local timezone
+        # Extract the UTC timestamp from the filename
         download_filename = None
         try:
             # Get the base filename (e.g., "2026-01-13-07-03-00.wav")
@@ -926,24 +906,10 @@ def get_audio_url_file(message_id):
                     # Create UTC datetime object
                     utc_dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
                     
-                    # Get timezone from settings
-                    user_timezone = get_timezone()
-                    
-                    # Convert UTC to user's timezone
-                    try:
-                        user_tz = pytz.timezone(user_timezone)
-                        local_dt = utc_dt.astimezone(user_tz)
-                        
-                        # Generate new filename with channel name and local timezone
-                        # Format: {channel_name}_YYYY-MM-DD-HH-MM-SS.wav
-                        download_filename = f'{safe_channel_name}_{local_dt.strftime("%Y-%m-%d-%H-%M-%S")}.wav'
-                    except Exception as tz_error:
-                        error_logger.warning(f"Error converting timezone {user_timezone}: {tz_error}, using UTC filename")
-                        download_filename = f'{safe_channel_name}_{base_filename}'
+                    download_filename = f'{safe_channel_name}_{utc_dt.strftime("%Y-%m-%d-%H-%M-%S")}.wav'
                 else:
                     download_filename = f'{safe_channel_name}_{base_filename}'
             else:
-                # If filename doesn't match expected format, use original filename with channel name
                 download_filename = f'{safe_channel_name}_{base_filename}'
         except Exception as e:
             error_logger.warning(f"Error parsing timestamp from filename {filename}: {e}, using original filename")
@@ -1051,10 +1017,9 @@ def get_channel_duration_by_message_id(message_id):
                     return jsonify({'error': f'Failed to calculate duration: {str(e)}'}), 500
 
         # At this point we have duration_seconds/milliseconds. Now also compute
-        # a human-readable recording start/end time based on the filename and timezone.
+        # a human-readable recording start/end time based on the UTC filename.
         start_time_str = None
         end_time_str = None
-        timezone_name = None
 
         try:
             # filename is a relative path like 'recordings/<MAC>/YYYY/MM/DD/YYYY-MM-DD-HH-MM-SS.wav'
@@ -1066,26 +1031,9 @@ def get_channel_duration_by_message_id(message_id):
                 year, month, day, hour, minute, second = map(int, match.groups())
                 utc_dt = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
 
-                # Get user timezone from settings
-                user_timezone = get_timezone()
-                timezone_name = user_timezone
-
-                try:
-                    user_tz = pytz.timezone(user_timezone)
-                    local_start = utc_dt.astimezone(user_tz)
-                except Exception as tz_error:
-                    error_logger.warning(
-                        f"Error converting recording time to timezone {user_timezone}: {tz_error}, using UTC"
-                    )
-                    local_start = utc_dt
-                    timezone_name = "UTC"
-
-                # Calculate local end time
-                local_end = local_start + timedelta(seconds=duration_seconds)
-
-                # Format times as 'YYYY-MM-DD HH:MM:SS TZ'
-                start_time_str = local_start.strftime("%Y-%m-%d %H:%M:%S %Z")
-                end_time_str = local_end.strftime("%Y-%m-%d %H:%M:%S %Z")
+                utc_end = utc_dt + timedelta(seconds=duration_seconds)
+                start_time_str = utc_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+                end_time_str = utc_end.strftime("%Y-%m-%d %H:%M:%S UTC")
         except Exception as e:
             # Don't fail the endpoint if time parsing fails – just log and return duration only
             error_logger.warning(f"Failed to derive recording start/end time from filename {filename}: {e}")
@@ -1102,9 +1050,6 @@ def get_channel_duration_by_message_id(message_id):
             response_data['start_time'] = start_time_str
         if end_time_str:
             response_data['end_time'] = end_time_str
-        if timezone_name:
-            response_data['timezone'] = timezone_name
-
         return jsonify(response_data), 200
 
     except Exception as e:

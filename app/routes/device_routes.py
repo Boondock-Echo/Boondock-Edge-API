@@ -11,7 +11,6 @@ import subprocess
 import io
 import time
 import uuid
-import pytz
 from config import DATA_ROOT
 from datetime import datetime, timezone
 from flask import Blueprint, after_this_request, jsonify, request, send_file
@@ -1093,6 +1092,7 @@ def device_cloud_events_list(mac):
 
 @device_bp.route('/v1/audio/s3', methods=['POST'])
 @device_bp.route('/v2/audio/s3', methods=['POST'])
+@device_bp.route('/upload/audio', methods=['POST'])
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Upload an audio file to S3 (v1: default WAV; v2: default MP3)',
@@ -1199,34 +1199,17 @@ def upload_audio_s3():
         """Log both the current step and cumulative request duration."""
         nonlocal previous_log_duration_ms, step_started_at
         now = time.perf_counter()
-        step_log = (
-            step,
-            (now - step_started_at) * 1000,
-            (now - request_started_at) * 1000,
-            previous_log_duration_ms,
-        )
-        if audio_filename is None:
-            # Accessing request.files here would parse (and potentially wait for)
-            # the entire multipart body. Keep the measurement, then emit it once
-            # form parsing has supplied the filename.
-            deferred_step_logs.append(step_log)
-            step_started_at = now
-            previous_log_duration_ms = 0.0
-            return
 
-        logs_to_emit = [*deferred_step_logs, step_log]
-        deferred_step_logs.clear()
-        for logged_step, step_duration, total_duration, prior_log_duration in logs_to_emit:
+        if(previous_log_duration_ms > 1000 or (now - step_started_at) > 1000):
             logging.info(
-                "audio_s3_step_performance request_id=%s file=%s step=%s "
+                "audio_s3_step_performance request_id=%s step=%s "
                 "step_duration_ms=%.2f total_duration_ms=%.2f "
                 "previous_log_duration_ms=%.2f",
                 request_id,
-                audio_filename,
-                logged_step,
-                step_duration,
-                total_duration,
-                prior_log_duration,
+                step,
+                (now - step_started_at) * 1000,
+                (now - request_started_at) * 1000,
+                previous_log_duration_ms,
             )
         # Start the next step after the log record has been emitted. Logging can
         # block on the configured handler (for example journald), and charging
@@ -1302,9 +1285,11 @@ def upload_audio_s3():
                 jsonify({"error": "Missing required fields (mac_address and audio_file)"}),
                 400,
             )
-        
-        mac_address = form_data["mac_address"]
-        audio_file = uploaded_audio
+
+        mac_address = request.form["mac_address"]
+        audio_file = request.files["audio_file"]
+        log_audio_step("form_parsing")
+        audio_filename = audio_file.filename if audio_file is not None else "Error"
         log_audio_request()
         log_audio_step("multipart_parsing")
     except (OSError, ConnectionResetError, ConnectionError) as e:
@@ -1376,13 +1361,13 @@ def upload_audio_s3():
         try:
             utc_now = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             if utc_now.tzinfo is None:
-                utc_now = pytz.UTC.localize(utc_now)
+                utc_now = utc_now.replace(tzinfo=timezone.utc)
         except Exception:
             logging.warning("Invalid timestamp format: %s", timestamp_str)
             log_audio_step("upload_metadata")
             return jsonify({"error": "Invalid timestamp format; use ISO 8601"}), 400
     else:
-        utc_now = datetime.now(pytz.UTC)
+        utc_now = datetime.now(timezone.utc)
     log_audio_step("upload_metadata")
 
     # 3. ---- Token-vs-MAC validation (unchanged) --------------------------------
@@ -1454,7 +1439,6 @@ def upload_audio_s3():
     # assigned after local collision handling so local and S3 names stay aligned.
     mac_folder = mac_address.lower()
     ext = "mp3" if convert_to_mp3 else "wav"
-    filename = uploaded_filename
 
     # Prepare for local save and S3 upload
     local_file_saved = False
@@ -1553,7 +1537,7 @@ def upload_audio_s3():
                 try:
                     cursor = conn.cursor()
 
-                    db_timestamp = datetime.now(pytz.UTC).strftime('%Y%m%d_%H%M%S')
+                    db_timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
                     relative_path = absolute_path.relative_to(DATA_ROOT).as_posix()
                     cursor.execute('''
                         INSERT INTO recordings (channel_id, filename, timestamp, transcription, status, is_duplicate, crc, filesize, duration)
@@ -2026,7 +2010,7 @@ def save_device_settings():
     except Exception as e:
         return jsonify({'error': f'Failed to save settings: {str(e)}'}), 500
 
-    utc_now = datetime.now(pytz.UTC)
+    utc_now = datetime.now(timezone.utc)
     log_message = f"Settings saved - Device: {mac_address}, Filepath: {filepath}"
     logging.info(log_message)
 

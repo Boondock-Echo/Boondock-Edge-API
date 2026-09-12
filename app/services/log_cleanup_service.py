@@ -7,7 +7,7 @@ import re
 import logging
 import sqlite3
 from config import Config
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ def cleanup_old_logs():
     log.info("LOG CLEANUP STARTING")
     log.info("=" * 60)
     
-    cutoff_date = datetime.now().date() - timedelta(days=RETENTION_DAYS)
+    cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=RETENTION_DAYS)
     cutoff_datetime = datetime.combine(cutoff_date, datetime.min.time())
     log.info(f"Cutoff date: {cutoff_date} (deleting files/records older than {RETENTION_DAYS} days)")
     

@@ -118,13 +118,13 @@ def login():
         device_info = {
             'user_agent': request.headers.get('User-Agent', 'Unknown'),
             'ip_address': request.remote_addr or request.headers.get('X-Forwarded-For', 'Unknown'),
-            'login_time': datetime.now().isoformat()
+            'login_time': datetime.now(timezone.utc).isoformat()
         }
         
         # Generate secure session token.
         # Use timezone-aware UTC so the stored expiry is consistent with how
         # auth.get_valid_token_data() and the DB cleanup interpret it. Using a
-        # naive datetime.now() here mixed local time with UTC comparisons and
+        # naive datetime.now(timezone.utc) here mixed local time with UTC comparisons and
         # made session lifetimes depend on the server's timezone offset.
         now_utc = datetime.now(timezone.utc)
         session_token = secrets.token_urlsafe(32)
@@ -155,7 +155,7 @@ def login():
         
         # Add to login history (keep last 50)
         user['login_history'].insert(0, {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'ip_address': device_info['ip_address'],
             'user_agent': device_info['user_agent'],
             'device_id': device_id
@@ -184,15 +184,15 @@ def login():
                 'device_id': device_id,
                 'user_agent': device_info['user_agent'],
                 'ip_address': device_info['ip_address'],
-                'first_seen': datetime.now().isoformat(),
-                'last_seen': datetime.now().isoformat(),
+                'first_seen': datetime.now(timezone.utc).isoformat(),
+                'last_seen': datetime.now(timezone.utc).isoformat(),
                 'name': device_name
             })
         else:
             # Update last seen
             for device in user['devices']:
                 if device.get('device_id') == device_id:
-                    device['last_seen'] = datetime.now().isoformat()
+                    device['last_seen'] = datetime.now(timezone.utc).isoformat()
                     device['ip_address'] = device_info['ip_address']
                     break
         
@@ -272,7 +272,7 @@ def verify_token():
         if is_token_valid(token):
             token_data = VALID_TOKENS[token]
             # Update last activity
-            token_data['last_activity'] = datetime.now().isoformat()
+            token_data['last_activity'] = datetime.now(timezone.utc).isoformat()
             save_tokens()
             
             return jsonify({

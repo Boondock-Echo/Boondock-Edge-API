@@ -52,7 +52,6 @@ DEFAULT_SETTINGS = {
     "global_transcribe_local": True,
     "global_transcribe_openai": False,
     "global_hallucination": True,
-    "global_timezone": "UTC",
     "keywords": [],
     "global_min_record_secs": 1,
     "global_max_record_secs": 30,

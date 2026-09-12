@@ -5,7 +5,7 @@ Provides endpoints for retrieving device health statistics.
 
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..services.device_health_monitor import (
     get_health_stats,
@@ -101,7 +101,7 @@ def get_device_health():
         
         return jsonify({
             'stats': stats,
-            'date': date or datetime.now().strftime('%Y-%m-%d'),
+            'date': date or datetime.now(timezone.utc).strftime('%Y-%m-%d'),
             'current': current
         }), 200
     except Exception as e:
@@ -157,7 +157,7 @@ def get_device_health_by_mac(mac):
         
         return jsonify({
             'stats': stats,
-            'date': date or datetime.now().strftime('%Y-%m-%d'),
+            'date': date or datetime.now(timezone.utc).strftime('%Y-%m-%d'),
             'current': current
         }), 200
     except Exception as e:
@@ -214,7 +214,7 @@ def get_system_health():
             metrics = get_current_metrics()
             return jsonify({
                 'stats': metrics,
-                'date': date or datetime.now().strftime('%Y-%m-%d'),
+                'date': date or datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                 'current': True
             }), 200
         else:
@@ -223,14 +223,14 @@ def get_system_health():
             if stats is None:
                 return jsonify({
                     'stats': None,
-                    'date': date or datetime.now().strftime('%Y-%m-%d'),
+                    'date': date or datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                     'current': False,
                     'message': 'No system health data available for the selected date'
                 }), 200
             
             return jsonify({
                 'stats': stats,
-                'date': date or datetime.now().strftime('%Y-%m-%d'),
+                'date': date or datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                 'current': False
             }), 200
     except Exception as e:

@@ -61,12 +61,6 @@ def get_settings():
 
 
 def _resolve_timezone_name(explicit_timezone=None):
-    """Return a valid timezone name from request/settings with safe fallback."""
-    tz_name = explicit_timezone or _settings_manager.get_setting('global_timezone', 'UTC') or 'UTC'
-    try:
-        pytz.timezone(tz_name)
-        return tz_name
-    except Exception:
         return 'UTC'
 
 
@@ -233,7 +227,6 @@ def get_summary_metrics():
         logging.error(f"Error building summary metrics: {e}")
         return jsonify({'error': 'Failed to get summary metrics'}), 500
 
-
 @settings_bp.route('/settings', methods=['PUT'])
 @swag_from({
     'tags': ['Settings'],
@@ -251,7 +244,6 @@ def get_summary_metrics():
                     'global_transcribe_method': {'type': 'string', 'enum': ['local', 'openai']},
                     'global_transcription_api_key': {'type': 'string'},
                     'global_hallucination': {'type': 'string'},
-                    'global_timezone': {'type': 'string'},
                     'global_enable_uniden_scanners': {'type': 'string'},
                     'global_enable_edge_devices': {'type': 'string'},
                     'global_enable_usb_audio_devices': {'type': 'string'},
@@ -314,7 +306,6 @@ def update_settings():
             'global_transcribe_method',
             'global_transcription_api_key',
             'global_hallucination',
-            'global_timezone',
             # Inbox / live communications behaviour
             'global_inbox_view_mode',
             'global_inbox_records_per_page',
