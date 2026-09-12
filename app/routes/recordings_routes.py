@@ -135,7 +135,7 @@ def get_upload_status(filename):
 
 
 # Queue management routes - must be defined before dynamic routes
-@recordings_bp.route('/queue/status', methods=['GET', 'OPTIONS'])
+@recordings_bp.route('/queue/status', methods=['GET'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Get transcription queue status summary',
@@ -169,7 +169,7 @@ def get_queue_status():
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 
-@recordings_bp.route('/queue/start', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/start', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Start the transcription queue processor',
@@ -180,13 +180,6 @@ def get_queue_status():
 })
 def start_queue():
     """Start the transcription queue so it processes pending tasks."""
-    if request.method == 'OPTIONS':
-        response = jsonify({'message': 'OK'})
-        response.headers['Content-Type'] = 'application/json'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response, 200
     try:
         audio_handler = get_audio_handler()
         if not audio_handler:
@@ -219,13 +212,6 @@ def start_queue():
 })
 def stop_queue():
     """Stop the transcription queue so it no longer processes tasks."""
-    # if request.method == 'OPTIONS':
-    #     response = jsonify({'message': 'OK'})
-    #     response.headers['Content-Type'] = 'application/json'
-    #     response.headers['Access-Control-Allow-Origin'] = '*'
-    #     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-    #     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-    #     return response, 200
     try:
         audio_handler = get_audio_handler()
         if not audio_handler:
@@ -242,7 +228,7 @@ def stop_queue():
         return jsonify({'error': str(e)}), 500
 
 
-@recordings_bp.route('/queue/logs', methods=['GET', 'OPTIONS'])
+@recordings_bp.route('/queue/logs', methods=['GET'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Get transcription queue logs',
@@ -333,7 +319,7 @@ def get_queue_logs():
         return response, 500
 
 
-@recordings_bp.route('/queue/kill/<filename>', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/kill/<filename>', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Kill a processing task and mark it as failed',
@@ -383,7 +369,7 @@ def kill_task(filename):
         return response, 500
 
 
-@recordings_bp.route('/queue/requeue/<filename>', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/requeue/<filename>', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Requeue a failed or stuck task',
@@ -433,7 +419,7 @@ def requeue_task(filename):
         return response, 500
 
 
-@recordings_bp.route('/queue/purge', methods=['POST', 'OPTIONS'])
+@recordings_bp.route('/queue/purge', methods=['POST'])
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Purge queue logs',

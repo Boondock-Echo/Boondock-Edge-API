@@ -643,7 +643,7 @@ class MultiChannelAudioHandler:
                 'is_duplicate': is_duplicate
             }
         except Exception as e:
-            error_logger.error(f"Error queueing upload: {str(e)}")
+            error_logger.error(f"Error queueing upload: {str(e)}", exc_info=True,)
             return False, str(e)
 
     def _check_stuck_tasks(self):
