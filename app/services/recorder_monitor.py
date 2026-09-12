@@ -167,7 +167,7 @@ def _is_valid_message(message):
         return True
     
     # If it contains common ESP32/firmware keywords, keep it
-    keywords = ['wifi', 'error', 'warning', 'info', 'init', 'boot', 'flash', 'spi', 'gpio', 'uart']
+    keywords = ['wifi', 'error', 'warning', 'info', 'init', 'boot', 'flash', 'spi', 'uart']
     msg_lower = msg.lower()
     if any(kw in msg_lower for kw in keywords):
         return True

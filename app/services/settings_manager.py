@@ -332,17 +332,6 @@ class SettingsManager:
                     )
                 ''')
                 
-                # GPIO config table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS gpio_config (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        config_type TEXT,
-                        config_key TEXT,
-                        config_value TEXT,
-                        UNIQUE(config_type, config_key)
-                    )
-                ''')
-                
                 conn.commit()
                 logger.info("Database schema initialized successfully")
                 
@@ -1614,64 +1603,6 @@ class SettingsManager:
                 return False
             finally:
                 conn.close()
-    
-    # ==================== GPIO CONFIG METHODS ====================
-    
-    def get_gpio_config(self) -> Dict[str, Any]:
-        """Get GPIO configuration."""
-        with _db_lock:
-            conn = self._get_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM gpio_config')
-                config = {}
-                for row in cursor.fetchall():
-                    config_type = row['config_type']
-                    config_key = row['config_key']
-                    value = row['config_value']
-                    
-                    if config_type not in config:
-                        config[config_type] = {}
-                    
-                    # Try to parse as JSON
-                    try:
-                        value = json.loads(value)
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        pass
-                    
-                    config[config_type][config_key] = value
-                
-                return config
-            finally:
-                conn.close()
-    
-    def save_gpio_config(self, config: Dict[str, Any]) -> bool:
-        """Save GPIO configuration."""
-        with _db_lock:
-            conn = self._get_connection()
-            try:
-                cursor = conn.cursor()
-                # Clear existing config
-                cursor.execute('DELETE FROM gpio_config')
-                
-                # Insert new config
-                for config_type, type_data in config.items():
-                    for key, value in type_data.items():
-                        value_str = json.dumps(value) if not isinstance(value, str) else value
-                        cursor.execute('''
-                            INSERT INTO gpio_config (config_type, config_key, config_value)
-                            VALUES (?, ?, ?)
-                        ''', (config_type, key, value_str))
-                
-                conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error saving GPIO config: {e}")
-                conn.rollback()
-                return False
-            finally:
-                conn.close()
-
 
 # Global instance getter
 def get_settings_manager() -> SettingsManager:

@@ -41,8 +41,6 @@ FIRMWARE_METADATA_JSON = os.path.join(_DB_DIR, 'firmware_metadata.json')
 QUEUE_JSON = os.path.join(_DB_DIR, 'queue.json')
 CURRENT_QUEUE_JSON = os.path.join(_DB_DIR, 'current_queue.json')
 QUEUE_HISTORY_JSON = os.path.join(_DB_DIR, 'queue_history.json')
-GPIO_CONFIG_JSON = os.path.join(_DB_DIR, 'gpio_config.json')
-
 
 # Default file contents
 DEFAULT_SETTINGS = {
@@ -188,7 +186,6 @@ def initialize_all_json_files():
         _create_json_file(QUEUE_JSON, {"tasks": []}, "queue.json")
         _create_json_file(CURRENT_QUEUE_JSON, {"last_updated": None, "tasks": {}, "queue_size": 0, "total_tasks": 0}, "current_queue.json")
         _create_json_file(QUEUE_HISTORY_JSON, {"last_updated": None, "entries": []}, "queue_history.json")
-        _create_json_file(GPIO_CONFIG_JSON, {"pins": {}}, "gpio_config.json")
         
         # SPECIAL CASE: channels.json (requires manual setup)
         logger.info("\n[SPECIAL FILES - MANUAL SETUP REQUIRED]")

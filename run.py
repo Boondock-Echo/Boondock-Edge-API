@@ -200,26 +200,6 @@ def main():
         logger.error(f"Failed to create Flask application: {e}")
         sys.exit(1)
     
-    # Initialize optional services (non-blocking)
-    gpio_enabled = settings.get('global_enable_gpio', False)
-    led_enabled = settings.get('led_enabled', False)
-    
-    if gpio_enabled:
-        try:
-            from app.services.gpio_service import get_gpio_service
-            get_gpio_service().start()
-            logger.info("GPIO service started")
-        except Exception as e:
-            logger.warning(f"GPIO service failed: {e}")
-    
-    if led_enabled:
-        try:
-            from app.services.led_status_service import get_led_status_service
-            get_led_status_service().set_busy(retry_on_failure=True)
-            logger.info("LED status service initialized")
-        except Exception as e:
-            logger.debug(f"LED status service failed: {e}")
-    
     # Initialize scanners and recorders in background
     enable_scanners = settings.get('global_enable_uniden_scanners', True)
     enable_recorders = settings.get('global_enable_edge_devices', False)
@@ -316,24 +296,6 @@ def main():
     finally:
         # Cleanup
         logger.info("Shutting down...")
-
-        # Keep both logging queues alive while services shut down because their
-        # cleanup paths may emit additional records.
-        if led_enabled:
-            try:
-                from app.services.led_status_service import get_led_status_service
-                led_service = get_led_status_service()
-                led_service.stop_inactivity_monitor_thread()
-                led_service.send_shutdown()
-            except Exception:
-                pass
-
-        if gpio_enabled:
-            try:
-                from app.services.gpio_service import get_gpio_service
-                get_gpio_service().stop()
-            except Exception:
-                pass
 
         try:
             from app.services.cloud_device_events import shutdown_cloud_event_writer

@@ -49,13 +49,9 @@ DEFAULT_SETTINGS = {
     "host_password": "edge@123",
     "host_ip": "10.42.0.1",
     "host_port": "4000",
-    "led_enabled": False,
-    "led_gpio_pin": 24,
     "button_enabled": False,
-    "button_gpio_pin": None,
     "button_long_press_duration": 3.0,
     "relay_enabled": False,
-    "relay_gpio_pin": None,
     "usb_power_enabled": False,
     "samba_backup_enabled": False,
     "samba_share_path": "",
@@ -65,7 +61,6 @@ DEFAULT_SETTINGS = {
     "global_inbox_records_per_page": 20,
     "global_enable_usb_audio_devices": False,
     "global_show_duplicate_files": False,
-    "global_enable_gpio": False,
     "global_live_mode_enabled": False,
     "maintenance_time": "03:00",
     "maintenance_enabled_tasks": ["data_backup", "logs_cleanup", "disk_usage_calculation"],
@@ -160,45 +155,7 @@ def initialize_settings_database():
             }
         }
     }
-
-    # Default branding
-    DEFAULT_BRANDING = {
-        "organization_name": "Boondock Edge",
-        "tagline": "Emergency Services Communication",
-        "brand_colors": {
-            "primary": "#2563eb",
-            "secondary": "#4f46e5",
-            "accent": "#ec4899"
-        },
-        "font": "inter",
-        "assets": {
-            "logo": None,
-            "favicon": None,
-            "loader": None
-        }
-    }
-    
-    # Default GPIO config
-    DEFAULT_GPIO_CONFIG = {
-        "led": {
-            "gpio": 13,
-            "enabled": True,
-            "mode": "source"
-        },
-        "relays": {
-            "relay1": {
-                "gpio": 19,
-                "state": False,
-                "normal_state": "on"
-            },
-            "relay2": {
-                "gpio": 21,
-                "state": False,
-                "normal_state": "on"
-            }
-        }
-    }
-    
+  
     # Default firmware metadata
     FIRMWARE_STORAGE_DIR = DATA_ROOT / 'firmware'
     DEFAULT_FIRMWARE_ID = "default"
@@ -226,19 +183,7 @@ def initialize_settings_database():
         logger.info("Setting default profiles...")
         for name, profile_data in DEFAULT_PROFILES.items():
             settings_manager.save_profile(name, profile_data)
-        
-        # Initialize branding
-        logger.info("Setting default branding...")
-        existing_branding = settings_manager.get_branding()
-        if not existing_branding:
-            settings_manager.save_branding(DEFAULT_BRANDING)
-        
-        # Initialize GPIO config
-        logger.info("Setting default GPIO config...")
-        existing_gpio = settings_manager.get_gpio_config()
-        if not existing_gpio:
-            settings_manager.save_gpio_config(DEFAULT_GPIO_CONFIG)
-        
+
         # Initialize default firmware metadata (JSON file)
         logger.info("Setting default firmware metadata...")
         firmware_json_path = FIRMWARE_STORAGE_DIR / 'firmware.json'
