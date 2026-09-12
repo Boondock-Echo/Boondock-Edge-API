@@ -153,8 +153,9 @@ def _check_device_disconnections():
             
             try:
                 last_activity = datetime.fromisoformat(last_activity_str.replace('Z', '+00:00'))
-                if last_activity.tzinfo:
-                    last_activity = last_activity.replace(tzinfo=None)
+                if last_activity.tzinfo is None:
+                    # Assume timestamps without an offset are UTC
+                    last_activity = last_activity.replace(tzinfo=timezone.utc)
             except:
                 continue
             
