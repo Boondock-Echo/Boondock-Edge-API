@@ -5,12 +5,14 @@ import os
 import json
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_permission
 from datetime import datetime
 from .route_utils import REPORTS_FOLDER
 
 incident_reports_bp = Blueprint('incident_reports', __name__)
 
 @incident_reports_bp.route('/incident-reports', methods=['POST'])
+@require_permission(['incident_report.create'])
 @swag_from({
     'tags': ['Incident Reports'],
     'summary': 'Create an incident report',
@@ -85,6 +87,7 @@ def create_incident_report():
         return jsonify({'error': str(e)}), 500
 
 @incident_reports_bp.route('/incident-reports', methods=['GET'])
+@require_permission(['incident_report.read'])
 @swag_from({
     'tags': ['Incident Reports'],
     'summary': 'Get all incident reports',
@@ -113,6 +116,7 @@ def get_all_incident_reports():
 
 
 @incident_reports_bp.route('/incident-reports/<report_id>', methods=['POST', 'PATCH'])
+@require_permission(['incident_report.update'])
 @swag_from({
     'tags': ['Incident Reports'],
     'summary': 'Update an incident report',
@@ -176,6 +180,7 @@ def update_incident_report(report_id):
 
 
 @incident_reports_bp.route('/incident-reports/<report_id>', methods=['DELETE'])
+@require_permission(['incident_report.delete'])
 @swag_from({
     'tags': ['Incident Reports'],
     'summary': 'Delete an incident report',

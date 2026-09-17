@@ -84,7 +84,7 @@ def create_app(config_class=Config):
     from app.routes.recordings_routes import recordings_bp
     from app.routes.transcription_routes import transcription_bp
     from app.routes.users_routes import users_bp
-    from app.routes.profiles_routes import profiles_bp
+    from app.routes.groups_routes import groups_bp
     from app.routes.s3_routes import s3_bp
     from app.routes.hotspot_routes import hotspot_bp
     from app.routes.settings_routes import settings_bp
@@ -118,7 +118,7 @@ def create_app(config_class=Config):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(mfa_bp, url_prefix='/api/mfa')
     app.register_blueprint(users_bp, url_prefix='/api')
-    app.register_blueprint(profiles_bp, url_prefix='/api')
+    app.register_blueprint(groups_bp, url_prefix='/api')
     app.register_blueprint(s3_bp, url_prefix='/api')
     app.register_blueprint(hotspot_bp, url_prefix='/api')
     app.register_blueprint(settings_bp, url_prefix='/api')

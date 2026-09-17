@@ -1,48 +1,64 @@
-# app/middleware/auth_middleware.py
+"""Visible route-level authentication and authorization decorators."""
 from functools import wraps
-from flask import request, jsonify
-from ..utils.auth import get_valid_token_data
-import logging
 
-log = logging.getLogger(__name__)
+from flask import g, jsonify
 
-def _bearer_from_request():
-    raw = request.headers.get('Authorization') or request.headers.get('authorization') or ''
-    raw = (raw or '').strip()
-    if raw.lower().startswith('bearer '):
-        return raw[7:].strip()
-    return raw or None
+from ..utils.auth import authenticate
 
-
-def require_auth(f):
-    """Decorator to require authentication for a route."""
-    @wraps(f)
+def require_auth(function):
+    """Require a valid credential of any principal type."""
+    @wraps(function)
     def decorated_function(*args, **kwargs):
-        token = _bearer_from_request()
+        failure = authenticate()
+        return failure or function(*args, **kwargs)
 
-        if not token:
-            return jsonify({'error': 'Authentication required'}), 401
-
-        # Single atomic lookup — avoids TOCTOU between existence check and data read
-        token_data = get_valid_token_data(token)
-        if token_data is None:
-            return jsonify({'error': 'Invalid or expired token'}), 401
-
-        request.current_user = {
-            'email': token_data.get('email'),
-            'role': token_data.get('role', 'member')
-        }
-
-        return f(*args, **kwargs)
+    decorated_function.access_policy = {'type': 'auth'}
     return decorated_function
 
-def require_admin(f):
-    """Decorator to require admin role."""
-    @wraps(f)
-    @require_auth
+def require_admin(function):
+    """Require a user principal whose current role is administrator."""
+    @wraps(function)
     def decorated_function(*args, **kwargs):
-        if request.current_user.get('role') != 'admin':
+        failure = authenticate()
+        if failure:
+            return failure
+        if g.principal.get('type') != 'user' or g.principal.get('role') != 'admin':
             return jsonify({'error': 'Admin access required'}), 403
-        return f(*args, **kwargs)
+        return function(*args, **kwargs)
+
+    decorated_function.access_policy = {'type': 'admin'}
     return decorated_function
 
+def require_permission(permissions, loader=None, id_argument=None, inject_as=None):
+    """Require any listed permission and optionally inject an owned resource."""
+    def decorator(function):
+        @wraps(function)
+        def decorated_function(*args, **kwargs):
+            failure = authenticate()
+            if failure:
+                return failure
+            principal = g.principal
+            admin = principal.get('type') == 'user' and principal.get('role') == 'admin'
+            if permissions and not admin:
+                available = set(principal.get('permissions') or [])
+                if not available.intersection(permissions):
+                    return jsonify({'error': 'Permission required'}), 403
+            if loader is not None:
+                resource = (
+                    loader(principal, kwargs.get(id_argument))
+                    if id_argument else loader(principal)
+                )
+                if resource is None:
+                    return jsonify({'error': 'Resource not found'}), 404
+                kwargs[inject_as] = resource
+            return function(*args, **kwargs)
+
+        decorated_function.access_policy = {
+            'type': 'permission',
+            'permissions': permissions,
+            'loader': loader,
+            'id_argument': id_argument,
+            'inject_as': inject_as,
+        }
+        return decorated_function
+    return decorator

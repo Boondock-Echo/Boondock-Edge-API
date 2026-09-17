@@ -15,6 +15,7 @@ from config import DATA_ROOT
 from datetime import datetime, timezone
 from flask import Blueprint, after_this_request, jsonify, request, send_file
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin, require_auth, require_permission
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlencode
 from werkzeug.utils import secure_filename
@@ -32,12 +33,10 @@ from app.services.channel_state import (
 )
 from ..utils.logging_setup import error_logger, event_logger
 from ..utils.auth import (
-    load_tokens,
-    is_token_valid,
+    authenticate_token,
     is_mac_registered,
     generate_token,
     get_mac_for_token,
-    VALID_TOKENS,
 )
 from ..utils.s3_utils import (
     ensure_bucket_exists,
@@ -445,7 +444,15 @@ def _handle_cloud_style_device_event(data):
     if event_data is not None and not isinstance(event_data, dict):
         event_data = {"value": event_data}
 
-    load_tokens()
+    mac_key = normalize_mac_address(mac_colon)
+    if len(mac_key) != 12:
+        return jsonify({"error": "Invalid MAC address"}), 400
+    if get_channel_id_from_mac(mac_key, refresh=False) is None:
+        new_id = create_channel_for_mac(mac_key)
+        if new_id is None:
+            return jsonify({"error": "Failed to create channel"}), 500
+        track_device_created(mac_key)
+
     auth_header = request.headers.get("Authorization")
     token = (
         auth_header.split("Bearer ")[1]
@@ -465,26 +472,18 @@ def _handle_cloud_style_device_event(data):
     token_valid = bool(
         token_hex
         and token_hex == _mac_hex_only(mac_colon)
-        and is_token_valid(token)
+        and authenticate_token(token)
     )
     if not token_valid:
         if not new_token:
             new_token, expires_at = generate_token(mac_colon)
         warning = "Invalid token" if not warning else warning + "; Invalid token"
 
-    mac_key = normalize_mac_address(mac_colon)
-    if len(mac_key) != 12:
-        return jsonify({"error": "Invalid MAC address"}), 400
-
     persist_cloud_device_event_async(
         mac_key, event_type_id, event_type, event_data
     )
 
     touch_device_activity(mac_key)
-    if get_channel_id_from_mac(mac_key, refresh=False) is None:
-        new_id = create_channel_for_mac(mac_key)
-        if new_id is not None:
-            track_device_created(mac_key)
 
     et = event_type.strip().lower()
     if et == "online":
@@ -867,6 +866,7 @@ def _handle_legacy_events_post():
 
 
 @device_bp.route('/v1/events', methods=['GET'])
+@require_auth
 @swag_from({
     'tags': ['Events'],
     'summary': 'Get event code mapping',
@@ -901,6 +901,7 @@ def get_event_codes():
 
 
 @device_bp.route('/v1/channel-visual-states', methods=['GET'])
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Events'],
     'summary': 'Get channel visual states',
@@ -941,6 +942,7 @@ def get_channel_visual_states():
 
 
 @device_bp.route('/v1/channel-visual-states/<mac>', methods=['GET'])
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Events'],
     'summary': 'Get visual state for a specific channel',
@@ -976,6 +978,7 @@ def _device_logs_root(mac_key: str) -> str:
 
 
 @device_bp.route('/v1/devices/<mac>/logs/files', methods=['GET'])
+@require_admin
 def device_logs_list_files(mac):
     """List uploaded device log files under logs/<mac>/."""
     mac_key = normalize_mac_address(mac)
@@ -1015,6 +1018,7 @@ def device_logs_list_files(mac):
 
 
 @device_bp.route('/v1/devices/<mac>/logs/content', methods=['GET'])
+@require_admin
 def device_logs_content(mac):
     """Return log file text; use ?path= relative path or ?date=YYYY-MM-DD."""
     mac_key = normalize_mac_address(mac)
@@ -1071,6 +1075,7 @@ def device_logs_content(mac):
 
 
 @device_bp.route('/v1/devices/<mac>/events', methods=['GET'])
+@require_permission(['channel.read'])
 def device_cloud_events_list(mac):
     """Recent cloud_device_events for this MAC."""
     mac_key = normalize_mac_address(mac)
@@ -1093,6 +1098,7 @@ def device_cloud_events_list(mac):
 @device_bp.route('/v1/audio/s3', methods=['POST'])
 @device_bp.route('/v2/audio/s3', methods=['POST'])
 @device_bp.route('/upload/audio', methods=['POST'])
+@require_permission(['device', 'recording.create'])
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Upload an audio file to S3 (v1: default WAV; v2: default MP3)',
@@ -1258,7 +1264,6 @@ def upload_audio_s3():
             json.dumps(request_details, sort_keys=True, default=str),
         )
 
-    load_tokens()
     log_audio_step("token_loading")
 
     # 1. ---- Parse auth header --------------------------------------------------
@@ -1381,9 +1386,8 @@ def upload_audio_s3():
 
     token_valid = (
         token
-        and token in VALID_TOKENS
-        and is_token_valid(token)
-        and VALID_TOKENS[token]["mac_address"] == mac_address
+        and get_mac_for_token(token, mac_address)
+        and authenticate_token(token)
     )
     logging.debug("token_valid=%s", token_valid)
 
@@ -1727,6 +1731,7 @@ def upload_audio_s3():
 
 @device_bp.route('/V1/upload/logs', methods=['POST'])
 @device_bp.route('/v1/upload/logs', methods=['POST'])
+@require_permission(['device'])
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Upload log files from ESP32 devices',
@@ -1784,7 +1789,6 @@ def upload_audio_s3():
 })
 def upload_logs():
     """Upload log files from ESP32 devices. Files are stored under /logs/<devicemac>/YYYY/MM/YYYY-MM-DD.log or .txt"""
-    load_tokens()  # Ensure latest tokens
     
     # Parse auth header
     auth_header = request.headers.get('Authorization')
@@ -1901,7 +1905,7 @@ def upload_logs():
         warning_msg = 'MAC address registered' if not warning_msg else warning_msg + '; MAC address registered'
     
     token_mac = get_mac_for_token(token) if token else None
-    token_valid = token_mac == mac_address and is_token_valid(token) if token_mac else False
+    token_valid = token_mac == mac_address and authenticate_token(token) if token_mac else False
     if not token_valid:
         if not new_token:
             new_token, expires_at = generate_token(mac_address)
@@ -1923,6 +1927,7 @@ def upload_logs():
     return jsonify(response), 200
 
 @device_bp.route('/v1/settings', methods=['POST'])
+@require_permission(['device', 'channel.update'])
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Save device settings for Boondock devices',
@@ -1973,7 +1978,6 @@ def upload_logs():
 })
 def save_device_settings():
     """Save device settings for Boondock devices."""
-    load_tokens()
     auth_header = request.headers.get('Authorization')
     token = auth_header.split('Bearer ')[1] if auth_header and auth_header.startswith('Bearer ') else None
 
@@ -1992,7 +1996,7 @@ def save_device_settings():
         warning = 'MAC address registered'
 
     token_mac = get_mac_for_token(token) if token else None
-    token_valid = token_mac == mac_address and is_token_valid(token) if token_mac else False
+    token_valid = token_mac == mac_address and authenticate_token(token) if token_mac else False
     if not token_valid:
         if not new_token:
             new_token, expires_at = generate_token(mac_address)
@@ -2029,6 +2033,7 @@ def save_device_settings():
 
 
 @device_bp.route('/v1/settings/<mac_address>', methods=['GET'])
+@require_permission(['device', 'channel.read'])
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Retrieve device settings for Boondock devices',
@@ -2068,7 +2073,6 @@ def save_device_settings():
 })
 def get_device_settings(mac_address):
     """Retrieve device settings for Boondock devices."""
-    load_tokens()
     auth_header = request.headers.get('Authorization')
     token = auth_header.split('Bearer ')[1] if auth_header and auth_header.startswith('Bearer ') else None
 
@@ -2080,7 +2084,7 @@ def get_device_settings(mac_address):
         warning = 'MAC address registered'
 
     token_mac = get_mac_for_token(token) if token else None
-    token_valid = token_mac == mac_address and is_token_valid(token) if token_mac else False
+    token_valid = token_mac == mac_address and authenticate_token(token) if token_mac else False
     if not token_valid:
         if not new_token:
             new_token, expires_at = generate_token(mac_address)
@@ -2111,6 +2115,7 @@ def get_device_settings(mac_address):
 
 
 @device_bp.route('/v1/firmware/check', methods=['GET'])
+@require_permission(['device'])
 @swag_from({
     "tags": ["Firmware"],
     "summary": "Check for device firmware upgrade (cloud-style API)",
@@ -2173,6 +2178,7 @@ def firmware_check():
 
 
 @device_bp.route('/v1/firmware/download/<firmware_id>/<filename>', methods=['GET'])
+@require_permission(['device'])
 def firmware_download(firmware_id, filename):
     """Serve OTA binaries from managed firmware storage."""
     if filename not in ("firmware.bin", "bootloader.bin", "partitions.bin"):

@@ -85,7 +85,6 @@ def _initialize_and_capture_settings(monkeypatch, tmp_path, document):
     monkeypatch.setattr("app.services.db_initializer.initialize_settings_database", lambda: True)
     monkeypatch.setattr("app.services.recordings_db_initializer.initialize_db", lambda: None)
     monkeypatch.setattr("app.services.settings_manager.get_settings_manager", SettingsManager)
-    monkeypatch.setattr("app.utils.auth.load_tokens", lambda: None)
     monkeypatch.setattr("app.utils.password_utils.hash_password", lambda password: "hashed")
     monkeypatch.setattr(
         manage,

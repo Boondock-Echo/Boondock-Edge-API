@@ -3,11 +3,13 @@ Pagination preferences routes for managing user pagination settings.
 """
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 from .route_utils import load_pagination_preferences, save_pagination_preferences
 
 pagination_bp = Blueprint('pagination', __name__)
 
 @pagination_bp.route('/pagination-preferences/<username>', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Get pagination preferences for a user',
@@ -41,6 +43,7 @@ def get_pagination_preferences(username):
         return jsonify({'error': f'Failed to load pagination preferences: {str(e)}'}), 500
 
 @pagination_bp.route('/pagination-preferences/<username>', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Save pagination preferences for a user',

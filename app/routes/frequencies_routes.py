@@ -4,6 +4,7 @@ Frequencies routes for managing frequency entries.
 import json
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 from ..services.settings_manager import get_settings_manager
 
 _settings_manager = get_settings_manager()
@@ -11,6 +12,7 @@ _settings_manager = get_settings_manager()
 frequencies_bp = Blueprint('frequencies', __name__)
 
 @frequencies_bp.route('/frequencies', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Frequencies'],
     'summary': 'Get all frequencies',
@@ -24,6 +26,7 @@ def get_frequencies():
     return jsonify(frequencies_data)
 
 @frequencies_bp.route('/frequencies', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Frequencies'],
     'summary': 'Add a new frequency',
@@ -86,6 +89,7 @@ def add_frequency():
         return jsonify({'error': str(e)}), 400
 
 @frequencies_bp.route('/frequencies/<int:freq_id>', methods=['PUT'])
+@require_admin
 @swag_from({
     'tags': ['Frequencies'],
     'summary': 'Update frequency',
@@ -148,6 +152,7 @@ def update_frequency(freq_id):
         return jsonify({'error': str(e)}), 400
 
 @frequencies_bp.route('/frequencies/<int:freq_id>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Frequencies'],
     'summary': 'Delete frequency',

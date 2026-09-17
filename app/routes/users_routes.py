@@ -9,17 +9,10 @@ from flask import Blueprint, jsonify, request
 from flasgger import swag_from
 
 from ..utils.logging_setup import error_logger
-from ..utils.auth import (
-    is_token_valid,
-    VALID_TOKENS,
-)
+from ..middleware.auth_middleware import require_admin
 from ..utils.password_utils import hash_password
 from ..utils.mfa_utils import generate_mfa_secret
-from ..utils.profile_utils import (
-    load_profiles,
-    get_user_profile,
-    get_all_features,
-)
+from ..utils.profile_utils import get_all_features
 from ..routes.route_utils import init_users
 from ..services.settings_manager import get_settings_manager
 
@@ -29,6 +22,7 @@ users_bp = Blueprint('users', __name__)
 
 
 @users_bp.route('/users', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Get all users',
@@ -54,6 +48,7 @@ def get_users():
 
 
 @users_bp.route('/users/<email>', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Get user by email',
@@ -76,8 +71,7 @@ def get_user_by_email(email):
     """Fetch user data for a specific email (without password)."""
     init_users()
     try:
-        users = _settings_manager.get_all_users()  # users is a dict
-        user = users.get(email)
+        user = _settings_manager.get_user(email)
         if user:
             # Remove password from response
             safe_user = {k: v for k, v in user.items() if k != 'password'}
@@ -89,6 +83,7 @@ def get_user_by_email(email):
 
 
 @users_bp.route('/users', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Create a new user',
@@ -130,17 +125,15 @@ def create_user():
         if data['role'] not in ['admin', 'member']:
             return jsonify({'error': 'Invalid role'}), 400
             
-        users = _settings_manager.get_all_users()
-            
-        # Check if email already exists
-        if data['email'] in users:
+        if _settings_manager.get_user(data['email']):
             return jsonify({'error': 'Email already exists'}), 409
-        
-        # Get profile (default to 'Default' if not specified)
-        profile_name = data.get('profile', 'Default')
-        profiles = load_profiles()
-        if profile_name not in profiles:
-            profile_name = 'Default'  # Fallback to Default if profile doesn't exist
+
+        groups = data.get('groups', [])
+        if not isinstance(groups, list) or any(
+            not isinstance(group_id, int) or not _settings_manager.get_group_by_id(group_id)
+            for group_id in groups
+        ):
+            return jsonify({'error': 'Invalid groups'}), 400
         
         # Create new user object with hashed password
         new_user = {
@@ -148,15 +141,11 @@ def create_user():
             'password': hash_password(data['password']),  # Hash password before storing
             'role': data['role'],
             'status': 'Active',
-            'profile': profile_name,
+            'groups': groups,
             'accessLevel': 'Level 3' if data['role'] == 'admin' else 'Level 1'
         }
         
-        # Save to JSON file
-        users[data['email']] = new_user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
+        _settings_manager.save_user(data['email'], new_user)
             
         return jsonify({'message': 'User created successfully', 'user': {**new_user, 'email': data['email']}}), 201
         
@@ -165,6 +154,7 @@ def create_user():
 
 
 @users_bp.route('/users/<email>', methods=['PUT'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Update user',
@@ -202,36 +192,33 @@ def update_user(email):
     try:
         data = request.get_json()
         
-        users = _settings_manager.get_all_users()
-            
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
             
         # Update allowed fields
         if 'name' in data:
-            users[email]['name'] = data['name']
+            user['name'] = data['name']
         if 'role' in data:
             if data['role'] not in ['admin', 'member']:
                 return jsonify({'error': 'Invalid role'}), 400
-            users[email]['role'] = data['role']
-            users[email]['accessLevel'] = "Level 3" if data['role'] == 'admin' else "Level 1"
-        if 'profile' in data:
-            profile_name = data['profile']
-            profiles = load_profiles()
-            if profile_name in profiles:
-                users[email]['profile'] = profile_name
-            else:
-                return jsonify({'error': 'Invalid profile'}), 400
+            user['role'] = data['role']
+            user['accessLevel'] = "Level 3" if data['role'] == 'admin' else "Level 1"
+        if 'groups' in data:
+            groups = data['groups']
+            if not isinstance(groups, list) or any(
+                not isinstance(group_id, int) or not _settings_manager.get_group_by_id(group_id)
+                for group_id in groups
+            ):
+                return jsonify({'error': 'Invalid groups'}), 400
+            user['groups'] = groups
         if 'password' in data and data['password']:
-            users[email]['password'] = hash_password(data['password'])  # Hash password before storing
-            
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
+            user['password'] = hash_password(data['password'])
+        _settings_manager.save_user(email, user)
             
         return jsonify({
             'message': 'User updated successfully',
-            'user': {**users[email], 'email': email}
+            'user': {**user, 'email': email}
         })
         
     except Exception as e:
@@ -239,6 +226,7 @@ def update_user(email):
 
 
 @users_bp.route('/users/<email>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Delete user',
@@ -260,9 +248,7 @@ def update_user(email):
 def delete_user(email):
     """Delete a user"""
     try:
-        users = _settings_manager.get_all_users()
-            
-        if email not in users:
+        if not _settings_manager.get_user(email):
             return jsonify({'error': 'User not found'}), 404
             
         # Prevent deleting the last admin
@@ -270,11 +256,7 @@ def delete_user(email):
         # if users[email]['role'] == 'admin' and remaining_admins <= 1:
         #     return jsonify({'error': 'Cannot delete the last admin user'}), 400
             
-        del users[email]
-        
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
+        _settings_manager.delete_user(email)
             
         return jsonify({'message': 'User deleted successfully'})
         
@@ -283,6 +265,7 @@ def delete_user(email):
 
 
 @users_bp.route('/users/<email>/permissions', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Get user permissions based on their profile',
@@ -304,48 +287,25 @@ def delete_user(email):
 def get_user_permissions(email):
     """Get user permissions based on their assigned profile."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            # Return empty permissions for unauthenticated requests
-            # The dashboard should handle this and redirect to login
-            return jsonify({
-                'profile': 'Default',
-                'features': {},
-                'isAdmin': False,
-                'authenticated': False
-            }), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_email = token_data.get('email')
-        requester_role = token_data.get('role', 'member')
-        
-        # Users can only view their own permissions unless they're admin
-        if requester_email != email and requester_role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
-        profile = get_user_profile(email, users)
+
+        principal = _settings_manager.get_principal('user', email)
         
         # Admin role always has all permissions
         if user.get('role') == 'admin':
             all_features = {f['key']: True for f in get_all_features()}
             return jsonify({
-                'profile': 'Admin',
+                'groups': user.get('groups', []),
                 'features': all_features,
                 'isAdmin': True,
                 'authenticated': True
             }), 200
         
         return jsonify({
-            'profile': profile.get('name', 'Default'),
-            'features': profile.get('features', {}),
+            'groups': user.get('groups', []),
+            'features': {permission: True for permission in principal['permissions']},
             'isAdmin': False,
             'authenticated': True
         }), 200
@@ -356,6 +316,7 @@ def get_user_permissions(email):
 
 
 @users_bp.route('/users/<email>/devices', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Get devices and login history for user',
@@ -369,38 +330,22 @@ def get_user_permissions(email):
 def get_user_devices(email):
     """Get devices and login history for a user."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_email = token_data.get('email')
-        requester_role = token_data.get('role', 'member')
-        
-        # Users can only view their own devices unless they're admin
-        if requester_email != email and requester_role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
-        
+
         return jsonify({
             'devices': user.get('devices', []),
             'login_history': user.get('login_history', [])
         }), 200
-        
+
     except Exception as e:
         logging.error(f"Get user devices error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @users_bp.route('/users/<email>/devices/<device_id>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Remove a device from user account',
@@ -414,50 +359,31 @@ def get_user_devices(email):
 def remove_device(email, device_id):
     """Remove a device from user account."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_email = token_data.get('email')
-        requester_role = token_data.get('role', 'member')
-        
-        # Users can only remove their own devices unless they're admin
-        if requester_email != email and requester_role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
         devices = user.get('devices', [])
-        
+
         # Find and remove device
         device_found = False
         user['devices'] = [d for d in devices if d.get('device_id') != device_id]
         device_found = len(user['devices']) < len(devices)
-        
+
         if not device_found:
             return jsonify({'error': 'Device not found'}), 404
-        
-        # Save users
-        users[email] = user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
-        
+
+        _settings_manager.save_user(email, user)
+
         return jsonify({'message': 'Device removed successfully'}), 200
-        
+
     except Exception as e:
         logging.error(f"Remove device error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @users_bp.route('/users/<email>/mfa/enable', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Enable MFA for a user (admin only)',
@@ -479,47 +405,28 @@ def remove_device(email, device_id):
 def admin_enable_mfa(email):
     """Enable MFA for a user (admin/superadmin only)."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_role = token_data.get('role', 'member')
-        
-        # Check if requester is admin
-        if requester_role != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
-        
+
         # Generate secret if not exists
         if not user.get('mfa_secret'):
             secret = generate_mfa_secret()
             user['mfa_secret'] = secret
-        
+
         user['mfa_enabled'] = True
-        
-        # Save users
-        users[email] = user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
-        
+
+        _settings_manager.save_user(email, user)
+
         return jsonify({'message': f'MFA enabled for {email}'}), 200
-        
+
     except Exception as e:
         logging.error(f"Admin enable MFA error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @users_bp.route('/users/<email>/mfa/disable', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Disable MFA for a user (admin only)',
@@ -541,41 +448,24 @@ def admin_enable_mfa(email):
 def admin_disable_mfa(email):
     """Disable MFA for a user (admin/superadmin only)."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_role = token_data.get('role', 'member')
-        
-        # Check if requester is admin
-        if requester_role != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
         user['mfa_enabled'] = False
-        
+
         # Save users
-        users[email] = user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
-        
+        _settings_manager.save_user(email, user)
+
         return jsonify({'message': f'MFA disabled for {email}'}), 200
-        
+
     except Exception as e:
         logging.error(f"Admin disable MFA error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @users_bp.route('/users/<email>/mfa/reset', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Reset/Clear MFA for a user (admin only) - allows user to login without MFA and setup again',
@@ -597,45 +487,27 @@ def admin_disable_mfa(email):
 def admin_reset_mfa(email):
     """Reset/Clear MFA for a user (admin/superadmin only). This clears MFA completely so user can login with just password and setup MFA again."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_role = token_data.get('role', 'member')
-        
-        # Check if requester is admin
-        if requester_role != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
         # Clear all MFA data
         user['mfa_enabled'] = False
         user.pop('mfa_secret', None)
         user.pop('mfa_secret_temp', None)
         # Note: We don't clear mfa_enforced here - that's separate
-        
-        # Save users
-        users[email] = user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
-        
+
+        _settings_manager.save_user(email, user)
+
         return jsonify({'message': f'MFA reset for {email}. User can now login with password only and setup MFA again.'}), 200
-        
+
     except Exception as e:
         logging.error(f"Admin reset MFA error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @users_bp.route('/users/<email>/mfa/enforce', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Users'],
     'summary': 'Enforce MFA for a user (admin only) - shows reminder popup on login',
@@ -669,40 +541,20 @@ def admin_reset_mfa(email):
 def admin_enforce_mfa(email):
     """Enforce MFA for a user (admin/superadmin only). When enforced, user will see reminder popup on login."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        requester_role = token_data.get('role', 'member')
-        
-        # Check if requester is admin
-        if requester_role != 'admin':
-            return jsonify({'error': 'Admin access required'}), 403
-        
         data = request.get_json()
         enforce = data.get('enforce', False)
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+
+        user = _settings_manager.get_user(email)
+        if not user:
             return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
         user['mfa_enforced'] = enforce
-        
-        # Save users
-        users[email] = user
-        # Save all users using SettingsManager
-        for email, user_data in users.items():
-            _settings_manager.save_user(email, user_data)
-        
+
+        _settings_manager.save_user(email, user)
+
         action = 'enforced' if enforce else 'removed'
         return jsonify({'message': f'MFA enforcement {action} for {email}'}), 200
-        
+
     except Exception as e:
         logging.error(f"Admin enforce MFA error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
-

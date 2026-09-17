@@ -16,7 +16,7 @@ from tempfile import NamedTemporaryFile
 from app.services.audio_handler import get_audio_handler
 from app.utils.crc_utils import check_and_update_duplicate_cache
 from ..utils.logging_setup import error_logger
-from ..middleware.auth_middleware import require_auth, require_admin
+from ..middleware.auth_middleware import require_admin, require_permission
 from ..routes.route_utils import (
     RECORDINGS_DIR,
     DB_PATH,
@@ -42,6 +42,7 @@ def _resolve_recording_path(filename):
     return path if path.is_relative_to(RECORDINGS_DIR) else None
 
 @recordings_bp.route('/uploads/queue', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Queue audio file for processing',
@@ -100,6 +101,7 @@ def upload_audio_queue():
 
 
 @recordings_bp.route('/uploads/<filename>/status', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Get upload processing status',
@@ -136,6 +138,7 @@ def get_upload_status(filename):
 
 # Queue management routes - must be defined before dynamic routes
 @recordings_bp.route('/queue/status', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Get transcription queue status summary',
@@ -170,6 +173,7 @@ def get_queue_status():
 
 
 @recordings_bp.route('/queue/start', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Start the transcription queue processor',
@@ -202,6 +206,7 @@ def start_queue():
 
 
 @recordings_bp.route('/queue/stop', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Stop the transcription queue processor',
@@ -229,6 +234,7 @@ def stop_queue():
 
 
 @recordings_bp.route('/queue/logs', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Get transcription queue logs',
@@ -320,6 +326,7 @@ def get_queue_logs():
 
 
 @recordings_bp.route('/queue/kill/<filename>', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Kill a processing task and mark it as failed',
@@ -370,6 +377,7 @@ def kill_task(filename):
 
 
 @recordings_bp.route('/queue/requeue/<filename>', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Requeue a failed or stuck task',
@@ -420,6 +428,7 @@ def requeue_task(filename):
 
 
 @recordings_bp.route('/queue/purge', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Queue'],
     'summary': 'Purge queue logs',
@@ -486,6 +495,7 @@ def purge_queue_logs():
 
 
 @recordings_bp.route('/recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get all recordings',
@@ -500,6 +510,7 @@ def get_recordings():
 
 @recordings_bp.route('/recordings/inbox', methods=['GET'])
 @recordings_bp.route('/recordings/inbox/range', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Retrieve inbox recordings',
@@ -573,6 +584,7 @@ def get_recordings_inbox():
 
 
 @recordings_bp.route('/recordings/inbox/count', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Total inbox count for a time window',
@@ -632,6 +644,7 @@ def get_recordings_inbox_count():
 
 
 @recordings_bp.route('/recordings/<path:filename>')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Serve audio file',
@@ -660,6 +673,7 @@ def serve_audio(filename):
     return send_from_directory(file_path.parent, file_path.name)
 
 @recordings_bp.route('/recordings/<int:recording_id>', methods=['DELETE'])
+@require_permission(['recording.delete'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Delete a recording',
@@ -732,6 +746,7 @@ def delete_recording(recording_id):
 
 
 @recordings_bp.route('/audio_url/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get audio URL for a recording',
@@ -820,6 +835,7 @@ def get_audio_url(message_id):
 
 
 @recordings_bp.route('/audio_url_file/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Download audio file for a recording',
@@ -920,6 +936,7 @@ def get_audio_url_file(message_id):
 
 
 @recordings_bp.route('/recording_duration_calculate/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Calculate recording duration',
@@ -1046,7 +1063,6 @@ def get_channel_duration_by_message_id(message_id):
 
 
 @recordings_bp.route('/truncate_recordings', methods=['POST'])
-@require_auth
 @require_admin
 @swag_from({
     'tags': ['Recordings'],
@@ -1124,6 +1140,7 @@ def truncate_recordings():
 
 
 @recordings_bp.route('/recordings/calendar/days', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get days with recordings for a month',
@@ -1194,6 +1211,7 @@ def get_calendar_days():
 
 
 @recordings_bp.route('/recordings/calendar/hours', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get hours with recordings for a day',
@@ -1272,6 +1290,7 @@ def get_calendar_hours():
 
 
 @recordings_bp.route('/recordings/calendar/recordings', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get recordings for a specific hour',

@@ -8,6 +8,7 @@ import logging
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 
 from ..services.settings_manager import get_settings_manager
 
@@ -17,6 +18,7 @@ hallucinations_bp = Blueprint('hallucinations', __name__)
 
 
 @hallucinations_bp.route('/hallucinations', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Hallucinations'],
     'summary': 'Create a hallucination entry',
@@ -76,6 +78,7 @@ def create_hallucination():
 
 
 @hallucinations_bp.route('/hallucinations', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Hallucinations'],
     'summary': 'List hallucinations',
@@ -137,6 +140,7 @@ def list_hallucinations():
 
 
 @hallucinations_bp.route('/hallucinations/<int:hallucinations_id>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Hallucinations'],
     'summary': 'Delete a hallucination',
