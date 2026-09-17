@@ -5,6 +5,7 @@ Handles Wi-Fi hotspot start, stop, and status operations.
 import json
 import logging
 from flask import Blueprint, jsonify, request
+from ..middleware.auth_middleware import require_admin
 
 from app.services.hotspot_service import (
     get_hotspot_status,
@@ -20,6 +21,7 @@ hotspot_bp = Blueprint('hotspot', __name__)
 
 
 @hotspot_bp.route('/hotspot/status', methods=['GET'])
+@require_admin
 def hotspot_status():
     """
     Return the current hotspot status and basic configuration summary.
@@ -49,6 +51,7 @@ def hotspot_status():
 
 
 @hotspot_bp.route('/hotspot/start', methods=['POST'])
+@require_admin
 def hotspot_start():
     """
     Create/update and start the hotspot on the edge device (Pi or mini PC).
@@ -94,6 +97,7 @@ def hotspot_start():
 
 
 @hotspot_bp.route('/hotspot/stop', methods=['POST'])
+@require_admin
 def hotspot_stop():
     """
     Stop the hotspot connection if it is active.

@@ -1,10 +1,23 @@
 import sqlite3
 from datetime import datetime, timezone
 
+import pytest
 from flask import Flask
 
 from app.routes import channels_routes, transcription_routes
-from app.services import settings_manager
+from app.services import db_initializer, settings_manager
+
+
+@pytest.fixture(autouse=True)
+def authenticated_route_request(monkeypatch):
+    monkeypatch.setattr('app.middleware.auth_middleware.get_request_token', lambda: 'test')
+    monkeypatch.setattr(
+        'app.middleware.auth_middleware.authenticate_token',
+        lambda token: {
+            'type': 'user', 'email': 'admin@example.com', 'role': 'admin',
+            'permissions': [], 'owner_ids': None,
+        },
+    )
 
 
 class StubSettingsManager:
@@ -81,6 +94,8 @@ def test_transcription_update_uses_resolved_recording_path(monkeypatch, tmp_path
 def test_new_settings_database_can_store_datetime(monkeypatch, tmp_path):
     database = tmp_path / "settings.db"
     monkeypatch.setattr(settings_manager, "SETTINGS_DB_PATH", database)
+    monkeypatch.setattr(db_initializer.Config, "get_settings_db_path", lambda: database)
+    db_initializer._create_database_schema()
     monkeypatch.setattr(settings_manager.SettingsManager, "_instance", None)
     manager = settings_manager.SettingsManager()
     timestamp = datetime(2026, 8, 15, 12, 30, tzinfo=timezone.utc)
@@ -92,4 +107,3 @@ def test_new_settings_database_can_store_datetime(monkeypatch, tmp_path):
         assert connection.execute(
             "SELECT value, type FROM settings WHERE key = 'last_run'"
         ).fetchone() == (timestamp.isoformat(), "datetime")
-

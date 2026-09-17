@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from config import DATA_ROOT
+from config import Config, DATA_ROOT
 
 LOGGER = logging.getLogger("boondock.setup")
 
@@ -140,7 +140,6 @@ def initialize(setup: dict[str, Any]) -> None:
     from app.services.db_initializer import initialize_settings_database
     from app.services.recordings_db_initializer import initialize_db
     from app.services.settings_manager import get_settings_manager
-    from app.utils.auth import load_tokens
     from app.utils.password_utils import hash_password
 
     initialize_settings_database()
@@ -151,7 +150,6 @@ def initialize(setup: dict[str, Any]) -> None:
         "name": existing_admin.get("name", "Administrator"),
         "password": hash_password(admin["password"]),
         "role": "admin",
-        "profile": "Admin",
         "status": "Active",
         "accessLevel": "Level 1",
         "mfa_enabled": existing_admin.get("mfa_enabled", False),
@@ -181,8 +179,6 @@ def initialize(setup: dict[str, Any]) -> None:
         raise RuntimeError("Unable to save administrator preferences")
 
     initialize_db()
-    load_tokens()
-
     if "boondock_edge" in selected:
         auto_configure_connected_edge_devices(settings_manager)
 
@@ -190,14 +186,10 @@ def initialize(setup: dict[str, Any]) -> None:
     LOGGER.info("API setup completed successfully in %s", DATA_ROOT)
 
 def upgrade() -> None:
-    # """Apply upgrade-safe initialization without changing installer settings."""
-    # from app.services.db_initializer import initialize_settings_database
-    # from app.services.recordings_db_initializer import initialize_db
-    # from app.utils.auth import load_tokens
+    """Apply versioned migrations without running installation setup."""
+    from migrations.authorization import upgrade_authorization_schema
 
-    # initialize_settings_database()
-    # initialize_db()
-    # load_tokens()
+    upgrade_authorization_schema(Config.get_settings_db_path())
 
     LOGGER.info("API upgrade completed successfully in %s", DATA_ROOT)
 
@@ -247,4 +239,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

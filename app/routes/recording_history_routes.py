@@ -7,6 +7,7 @@ import sqlite3
 import logging
 from flask import Blueprint, jsonify, request, send_file
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_permission
 
 from ..routes.route_utils import (
     DB_PATH,
@@ -20,6 +21,7 @@ history_bp = Blueprint('history', __name__)
 
 
 @history_bp.route('/recording/<int:recording_id>/history', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get recording history versions',
@@ -51,6 +53,7 @@ def get_recording_history(recording_id):
 
 
 @history_bp.route('/recording/<int:recording_id>/history/<int:version_number>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get a specific history version',
@@ -109,6 +112,7 @@ def get_history_version(recording_id, version_number):
 
 
 @history_bp.route('/recording/<int:recording_id>/history/<int:version_number>/revert', methods=['POST'])
+@require_permission(['recording.update'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Revert recording to a specific version',
@@ -153,6 +157,7 @@ def revert_recording_version(recording_id, version_number):
 
 
 @history_bp.route('/recording/<int:recording_id>/history/<int:version_number>', methods=['DELETE'])
+@require_permission(['recording.delete'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Delete a history version',
@@ -237,6 +242,7 @@ def delete_history_version(recording_id, version_number):
 
 
 @history_bp.route('/recording/<int:recording_id>/history/<int:version_number>/audio', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get audio file for a history version',

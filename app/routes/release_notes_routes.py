@@ -5,6 +5,7 @@ import re
 import logging
 from config import CODE_ROOT
 from flask import Blueprint, jsonify
+from ..middleware.auth_middleware import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ def _parse_release_notes(content: str) -> list:
 
 
 @release_notes_bp.route('/release-notes', methods=['GET'])
+@require_auth
 def get_release_notes():
     """Return parsed release notes from RELEASE_NOTES.md."""
     try:

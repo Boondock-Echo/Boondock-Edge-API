@@ -8,22 +8,16 @@ import logging
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from flasgger import swag_from
 
 from ..utils.logging_setup import error_logger
+from ..middleware.auth_middleware import require_auth
 from ..utils.auth import (
-    is_token_valid,
-    VALID_TOKENS,
-    save_tokens,
-    delete_expired_tokens,
+    get_request_token,
 )
-from ..utils.password_utils import hash_password, verify_password, is_md5_hash, verify_and_migrate
+from ..utils.password_utils import hash_password, verify_password, is_md5_hash
 from ..utils.mfa_utils import generate_mfa_secret, generate_mfa_qr_code, verify_totp_code, get_totp_uri
-from ..utils.profile_utils import (
-    get_user_profile,
-    get_all_features,
-)
 from ..routes.route_utils import init_users
 from ..services.settings_manager import get_settings_manager
 
@@ -31,6 +25,13 @@ _settings_manager = get_settings_manager()
 
 auth_bp = Blueprint('auth', __name__)
 mfa_bp = Blueprint('mfa', __name__)
+
+
+def _authenticated_user():
+    """Return the current user record; MFA is unavailable to other principals."""
+    if g.principal.get('type') != 'user':
+        return None
+    return _settings_manager.get_user(g.principal['email'])
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -68,15 +69,11 @@ def login():
         if not email or not password:
             return jsonify({'error': 'Email and password required'}), 400
         
-        # Load users
         init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
+        user = _settings_manager.get_user(email)
+        if user is None:
             # Don't reveal if user exists (prevent user enumeration)
             return jsonify({'error': 'Invalid credentials'}), 401
-        
-        user = users[email]
         stored_password = user.get('password', '')
         
         # Handle migration from MD5 to bcrypt
@@ -121,27 +118,14 @@ def login():
             'login_time': datetime.now(timezone.utc).isoformat()
         }
         
-        # Generate secure session token.
-        # Use timezone-aware UTC so the stored expiry is consistent with how
-        # auth.get_valid_token_data() and the DB cleanup interpret it. Using a
-        # naive datetime.now(timezone.utc) here mixed local time with UTC comparisons and
-        # made session lifetimes depend on the server's timezone offset.
+        # Store session expiry as timezone-aware UTC.
         now_utc = datetime.now(timezone.utc)
         session_token = secrets.token_urlsafe(32)
         expires_at = now_utc + timedelta(hours=24)  # 24 hour session
 
-        # Store session using the existing token system
-        VALID_TOKENS[session_token] = {
-            'email': email,
-            'user_id': email,
-            'role': user.get('role', 'member'),
-            'created_at': now_utc.isoformat(),
-            'expires_at': expires_at.isoformat(),
-            'last_activity': now_utc.isoformat(),
-            'device_info': device_info
-        }
-        save_tokens()
-        delete_expired_tokens()
+        _settings_manager.issue_credential(
+            'user', email, expires_at.isoformat(), token=session_token
+        )
 
         # Update user's login history and devices
         if 'login_history' not in user:
@@ -203,14 +187,11 @@ def login():
         mfa_enforced = user.get('mfa_enforced', False)
         show_mfa_reminder = mfa_enforced and not mfa_enabled
         
-        # Get user profile and permissions
-        user_profile = get_user_profile(email, users)
-        user_permissions = user_profile.get('features', {}) if user_profile else {}
-        
-        # Admin role always has all permissions
-        if user.get('role') == 'admin':
-            user_permissions = {f['key']: True for f in get_all_features()}
-        
+        principal = _settings_manager.get_principal('user', email) or {}
+        user_permissions = {
+            permission: True for permission in principal.get('permissions', [])
+        }
+
         # Return user info (without password and MFA secret)
         return jsonify({
             'token': session_token,
@@ -220,7 +201,7 @@ def login():
                 'name': user.get('name', email),
                 'role': user.get('role', 'member'),
                 'status': user.get('status', 'Active'),
-                'profile': user.get('profile', 'Default'),
+                'groups': user.get('groups', []),
                 'mfa_enabled': mfa_enabled,
                 'mfa_enforced': mfa_enforced,
                 'permissions': user_permissions
@@ -233,6 +214,7 @@ def login():
         return jsonify({'error': 'Internal server error'}), 500
 
 @auth_bp.route('/logout', methods=['POST'])
+@require_auth
 @swag_from({
     'tags': ['Authentication'],
     'summary': 'User logout',
@@ -244,15 +226,15 @@ def login():
 def logout():
     """Invalidate session token."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if token and token in VALID_TOKENS:
-            del VALID_TOKENS[token]
-            save_tokens()
+        token = get_request_token()
+        if token:
+            _settings_manager.delete_credential(token)
         return jsonify({'message': 'Logged out successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/verify', methods=['GET'])
+@require_auth
 @swag_from({
     'tags': ['Authentication'],
     'summary': 'Verify authentication token',
@@ -264,30 +246,10 @@ def logout():
 })
 def verify_token():
     """Verify if a token is valid."""
-    try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token:
-            return jsonify({'valid': False}), 401
-        
-        if is_token_valid(token):
-            token_data = VALID_TOKENS[token]
-            # Update last activity
-            token_data['last_activity'] = datetime.now(timezone.utc).isoformat()
-            save_tokens()
-            
-            return jsonify({
-                'valid': True,
-                'user': {
-                    'email': token_data.get('email'),
-                    'role': token_data.get('role')
-                }
-            }), 200
-        else:
-            return jsonify({'valid': False}), 401
-    except Exception as e:
-        return jsonify({'valid': False, 'error': str(e)}), 401
+    return jsonify({'valid': True, 'principal': g.principal}), 200
 
 @mfa_bp.route('/setup', methods=['POST'])
+@require_auth
 @swag_from({
     'tags': ['MFA'],
     'summary': 'Generate MFA secret and QR code for user',
@@ -300,24 +262,10 @@ def verify_token():
 def mfa_setup():
     """Generate MFA secret and QR code for the authenticated user."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        email = token_data.get('email')
-        
-        if not email:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
-            return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+        user = _authenticated_user()
+        if user is None:
+            return jsonify({'error': 'User authentication required'}), 403
+        email = user['email']
         
         # Generate new secret
         secret = generate_mfa_secret()
@@ -343,6 +291,7 @@ def mfa_setup():
         return jsonify({'error': 'Internal server error'}), 500
 
 @mfa_bp.route('/verify-setup', methods=['POST'])
+@require_auth
 @swag_from({
     'tags': ['MFA'],
     'summary': 'Verify MFA setup with TOTP code',
@@ -370,30 +319,16 @@ def mfa_setup():
 def mfa_verify_setup():
     """Verify MFA setup code and enable MFA for user."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
         data = request.get_json()
         totp_code = data.get('totp_code', '')
-        
+
         if not totp_code:
             return jsonify({'error': 'TOTP code required'}), 400
-        
-        token_data = VALID_TOKENS.get(token, {})
-        email = token_data.get('email')
-        
-        if not email:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
-            return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
+        user = _authenticated_user()
+        if user is None:
+            return jsonify({'error': 'User authentication required'}), 403
+        email = user['email']
         temp_secret = user.get('mfa_secret_temp', '')
         
         if not temp_secret:
@@ -418,6 +353,7 @@ def mfa_verify_setup():
         return jsonify({'error': 'Internal server error'}), 500
 
 @mfa_bp.route('/disable', methods=['POST'])
+@require_auth
 @swag_from({
     'tags': ['MFA'],
     'summary': 'Disable MFA for user',
@@ -446,28 +382,14 @@ def mfa_verify_setup():
 def mfa_disable():
     """Disable MFA for user (requires password and TOTP code)."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            return jsonify({'error': 'Unauthorized'}), 401
-        
         data = request.get_json()
         password = data.get('password', '')
         totp_code = data.get('totp_code', '')
-        
-        token_data = VALID_TOKENS.get(token, {})
-        email = token_data.get('email')
-        
-        if not email:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
-            return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+
+        user = _authenticated_user()
+        if user is None:
+            return jsonify({'error': 'User authentication required'}), 403
+        email = user['email']
         
         # Verify password
         stored_password = user.get('password', '')
@@ -495,6 +417,7 @@ def mfa_disable():
         return jsonify({'error': 'Internal server error'}), 500
 
 @mfa_bp.route('/status', methods=['GET'])
+@require_auth
 @swag_from({
     'tags': ['MFA'],
     'summary': 'Get MFA status for user',
@@ -507,31 +430,10 @@ def mfa_disable():
 def mfa_status():
     """Get MFA status for the authenticated user."""
     try:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or not is_token_valid(token):
-            # Return default MFA status for unauthenticated requests
-            # Dashboard should handle this and redirect to login
-            return jsonify({
-                'mfa_enabled': False,
-                'has_secret': False,
-                'mfa_enforced': False,
-                'authenticated': False
-            }), 401
-        
-        token_data = VALID_TOKENS.get(token, {})
-        email = token_data.get('email')
-        
-        if not email:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Load users
-        init_users()
-        users = _settings_manager.get_all_users()
-        
-        if email not in users:
-            return jsonify({'error': 'User not found'}), 404
-        
-        user = users[email]
+        user = _authenticated_user()
+        if user is None:
+            return jsonify({'error': 'User authentication required'}), 403
+        email = user['email']
         
         return jsonify({
             'mfa_enabled': user.get('mfa_enabled', False),
@@ -543,4 +445,3 @@ def mfa_status():
     except Exception as e:
         logging.error(f"MFA status error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
-

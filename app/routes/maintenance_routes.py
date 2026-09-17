@@ -6,6 +6,7 @@ import json
 import logging
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 
 from ..services.maintenance_service import (
     get_maintenance_service,
@@ -23,6 +24,7 @@ maintenance_bp = Blueprint('maintenance', __name__)
 
 
 @maintenance_bp.route('/maintenance/settings', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Maintenance'],
     'summary': 'Get maintenance settings',
@@ -68,6 +70,7 @@ def get_maintenance_settings():
 
 
 @maintenance_bp.route('/maintenance/settings', methods=['PUT'])
+@require_admin
 @swag_from({
     'tags': ['Maintenance'],
     'summary': 'Update maintenance settings',
@@ -148,6 +151,7 @@ def update_maintenance_settings():
 
 
 @maintenance_bp.route('/maintenance/history', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Maintenance'],
     'summary': 'Get maintenance history',
@@ -202,6 +206,7 @@ def get_maintenance_history():
 
 
 @maintenance_bp.route('/maintenance/run', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Maintenance'],
     'summary': 'Run maintenance tasks manually',
@@ -278,6 +283,7 @@ def run_maintenance_tasks():
 
 
 @maintenance_bp.route('/maintenance/system-usage', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Maintenance'],
     'summary': 'Get latest system usage information',

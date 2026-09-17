@@ -7,6 +7,9 @@ All access must go through this SettingsManager class.
 """
 
 import sqlite3
+import hashlib
+import secrets
+import uuid
 import json
 import logging
 import threading
@@ -104,7 +107,6 @@ class SettingsManager:
         
         self.db_path = SETTINGS_DB_PATH
         self._ensure_db_dir()
-        self._initialize_database()
         self._initialized = True
     
     def _ensure_db_dir(self):
@@ -114,233 +116,6 @@ class SettingsManager:
     def _get_connection(self):
         """Get a database connection with proper isolation."""
         return connect_sqlite(self.db_path, row_factory=True)
-    
-    def _initialize_database(self):
-        """Initialize the database schema with all required tables."""
-        with _db_lock:
-            conn = self._get_connection()
-            try:
-                cursor = conn.cursor()
-                
-                # Settings table (key-value pairs)
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS settings (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL,
-                        type TEXT NOT NULL CHECK (type IN ('bool', 'string', 'json', 'datetime', 'int', 'float'))
-                    )
-                ''')
-                
-                # Users table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS users (
-                        email TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        password TEXT NOT NULL,
-                        role TEXT,
-                        status TEXT,
-                        profile TEXT,
-                        access_level TEXT,
-                        mfa_enabled INTEGER DEFAULT 0,
-                        created_at TEXT,
-                        login_history TEXT,
-                        devices TEXT
-                    )
-                ''')
-                
-                # Profiles table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS profiles (
-                        name TEXT PRIMARY KEY,
-                        description TEXT,
-                        is_default INTEGER DEFAULT 0,
-                        features TEXT
-                    )
-                ''')
-                
-                # Tags table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS tags (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL,
-                        category TEXT,
-                        usage_count INTEGER DEFAULT 0,
-                        color TEXT,
-                        created_at TEXT
-                    )
-                ''')
-                
-                # Frequencies table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS frequencies (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT,
-                        frequency REAL,
-                        type TEXT,
-                        tone TEXT,
-                        tag TEXT,
-                        person TEXT,
-                        status TEXT
-                    )
-                ''')
-                
-                # Channels table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS channels (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT,
-                        status TEXT,
-                        model TEXT,
-                        src_language TEXT,
-                        target_language TEXT,
-                        color TEXT,
-                        background_color TEXT,
-                        team_color TEXT,
-                        car TEXT,
-                        driver TEXT,
-                        person TEXT,
-                        tag TEXT,
-                        mac TEXT UNIQUE NOT NULL,
-                        audio_stream_enabled INTEGER DEFAULT 0,
-                        threshold TEXT,
-                        silence TEXT,
-                        min_rec TEXT,
-                        max_rec TEXT,
-                        audio_gain TEXT,
-                        frequency REAL,
-                        tone TEXT,
-                        type TEXT,
-                        deleted INTEGER DEFAULT 0,
-                        audio_stream_port INTEGER,
-                        speaker_enabled INTEGER DEFAULT 0,
-                        speaker_volume INTEGER
-                    )
-                ''')
-                
-                # Try to add UNIQUE constraint if table already exists without it
-                try:
-                    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_mac_unique ON channels(mac)')
-                except sqlite3.OperationalError:
-                    # Index might already exist or table might not exist yet
-                    pass
-                
-                # Tokens table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS tokens (
-                        token TEXT PRIMARY KEY,
-                        email TEXT,
-                        user_id TEXT,
-                        role TEXT,
-                        mac_address TEXT,
-                        created_at TEXT,
-                        expires_at TEXT,
-                        last_activity TEXT,
-                        device_info TEXT
-                    )
-                ''')
-
-                # Pagination preferences table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS pagination_preferences (
-                        email TEXT PRIMARY KEY,
-                        records_per_page INTEGER,
-                        current_page INTEGER,
-                        reverse_sort INTEGER DEFAULT 0,
-                        show_full_timestamps INTEGER DEFAULT 0
-                    )
-                ''')
-                
-                # Branding table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS branding (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        organization_name TEXT,
-                        tagline TEXT,
-                        brand_colors TEXT,
-                        font TEXT,
-                        assets TEXT
-                    )
-                ''')
-                
-                # Hallucinations table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS hallucinations (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        data TEXT
-                    )
-                ''')
-                
-                # Backup history table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS backup_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        start_time TEXT,
-                        end_time TEXT,
-                        duration INTEGER,
-                        status TEXT,
-                        manual INTEGER DEFAULT 0,
-                        backup_type TEXT,
-                        destination TEXT,
-                        uploaded_files INTEGER DEFAULT 0,
-                        skipped_files INTEGER DEFAULT 0,
-                        error_files INTEGER DEFAULT 0,
-                        total_files INTEGER DEFAULT 0
-                    )
-                ''')
-                
-                # Reboot history table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS reboot_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        mac_address TEXT,
-                        timestamp TEXT,
-                        port TEXT
-                    )
-                ''')
-                
-                # Scanner inventory table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS scanner_inventory (
-                        scanner_id TEXT PRIMARY KEY,
-                        port TEXT,
-                        model TEXT,
-                        version TEXT,
-                        status TEXT
-                    )
-                ''')
-                
-                # Recorders inventory table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS recorders_inventory (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        data TEXT
-                    )
-                ''')
-                
-                # Firmware metadata is now stored in firmware/firmware.json (not in database)
-                
-                # Queue table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS queue (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        mac TEXT,
-                        relative_path TEXT,
-                        channel_id INTEGER,
-                        timestamp TEXT,
-                        error TEXT,
-                        attempt_time TEXT
-                    )
-                ''')
-                
-                conn.commit()
-                logger.info("Database schema initialized successfully")
-                
-            except Exception as e:
-                logger.error(f"Error initializing database: {e}")
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
     
     # ==================== SETTINGS METHODS ====================
     
@@ -440,6 +215,11 @@ class SettingsManager:
                             user['devices'] = json.loads(user['devices'])
                         except (json.JSONDecodeError, ValueError, TypeError):
                             user['devices'] = []
+                    if user.get('groups'):
+                        try:
+                            user['groups'] = json.loads(user['groups'])
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            user['groups'] = []
                     return user
                 return None
             finally:
@@ -466,6 +246,11 @@ class SettingsManager:
                             user['devices'] = json.loads(user['devices'])
                         except (json.JSONDecodeError, ValueError, TypeError):
                             user['devices'] = []
+                    if user.get('groups'):
+                        try:
+                            user['groups'] = json.loads(user['groups'])
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            user['groups'] = []
                     users[user['email']] = user
                 return users
             finally:
@@ -480,11 +265,12 @@ class SettingsManager:
                 # Convert JSON fields to strings
                 login_history = json.dumps(user_data.get('login_history', []))
                 devices = json.dumps(user_data.get('devices', []))
+                groups = json.dumps(user_data.get('groups', []))
                 
                 cursor.execute('''
                     INSERT OR REPLACE INTO users 
-                    (email, name, password, role, status, profile, access_level, 
-                     mfa_enabled, created_at, login_history, devices)
+                    (email, name, password, role, status, access_level,
+                     mfa_enabled, created_at, login_history, devices, groups)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     email,
@@ -492,12 +278,12 @@ class SettingsManager:
                     user_data.get('password'),
                     user_data.get('role'),
                     user_data.get('status'),
-                    user_data.get('profile'),
                     user_data.get('accessLevel'),
                     user_data.get('mfa_enabled', 0),
                     user_data.get('created_at'),
                     login_history,
-                    devices
+                    devices,
+                    groups
                 ))
                 conn.commit()
                 return True
@@ -509,11 +295,15 @@ class SettingsManager:
                 conn.close()
     
     def delete_user(self, email: str) -> bool:
-        """Delete a user."""
+        """Delete a user and all credentials issued to that user."""
         with _db_lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM credentials WHERE principal_type='user' AND principal_id=?",
+                    (email,),
+                )
                 cursor.execute('DELETE FROM users WHERE email = ?', (email,))
                 conn.commit()
                 return True
@@ -524,91 +314,124 @@ class SettingsManager:
             finally:
                 conn.close()
     
-    # ==================== PROFILES METHODS ====================
-    
-    def get_profile(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get a profile by name."""
+    # ==================== GROUP METHODS ====================
+
+    def get_group(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get an authorization group by name."""
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM profiles WHERE name = ?', (name,))
-                row = cursor.fetchone()
-                if row:
-                    profile = dict(row)
-                    if profile.get('features'):
-                        try:
-                            profile['features'] = json.loads(profile['features'])
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            profile['features'] = {}
-                    return profile
-                return None
+                row = conn.execute('SELECT * FROM groups WHERE name = ?', (name,)).fetchone()
+                if not row:
+                    return None
+                group = dict(row)
+                group['permissions'] = json.loads(group.get('permissions') or '[]')
+                group['is_default'] = bool(group.get('is_default'))
+                return group
             finally:
                 conn.close()
-    
-    def get_all_profiles(self) -> Dict[str, Dict[str, Any]]:
-        """Get all profiles as a dictionary keyed by name."""
+
+    def get_group_by_id(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """Get an authorization group by its stable integer ID."""
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM profiles')
-                profiles = {}
-                for row in cursor.fetchall():
-                    profile = dict(row)
-                    if profile.get('features'):
-                        try:
-                            profile['features'] = json.loads(profile['features'])
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            profile['features'] = {}
-                    profiles[profile['name']] = profile
-                return profiles
+                row = conn.execute('SELECT * FROM groups WHERE id=?', (group_id,)).fetchone()
+                if not row:
+                    return None
+                group = dict(row)
+                group['permissions'] = json.loads(group.get('permissions') or '[]')
+                group['is_default'] = bool(group.get('is_default'))
+                return group
             finally:
                 conn.close()
-    
-    def save_profile(self, name: str, profile_data: Dict[str, Any]) -> bool:
-        """Save or update a profile."""
+
+    def get_all_groups(self) -> Dict[int, Dict[str, Any]]:
+        """Get all authorization groups keyed by stable group ID."""
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                features = json.dumps(profile_data.get('features', {}))
-                
-                cursor.execute('''
-                    INSERT OR REPLACE INTO profiles 
-                    (name, description, is_default, features)
-                    VALUES (?, ?, ?, ?)
-                ''', (
-                    name,
-                    profile_data.get('description'),
-                    profile_data.get('isDefault', 0),
-                    features
-                ))
+                groups = {}
+                for row in conn.execute('SELECT * FROM groups').fetchall():
+                    group = dict(row)
+                    group['permissions'] = json.loads(group.get('permissions') or '[]')
+                    group['is_default'] = bool(group.get('is_default'))
+                    groups[group['id']] = group
+                return groups
+            finally:
+                conn.close()
+
+    def save_group(self, group_data: Dict[str, Any], group_id: Optional[int] = None) -> int:
+        """Create or update an authorization group and return its integer ID."""
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                if group_id is None:
+                    existing = conn.execute(
+                        'SELECT id FROM groups WHERE name=?', (group_data.get('name'),)
+                    ).fetchone()
+                    group_id = existing['id'] if existing else None
+                if group_id is None:
+                    cursor = conn.execute(
+                        """INSERT INTO groups
+                           (name, description, is_default, permissions)
+                           VALUES (?, ?, ?, ?)""",
+                        (group_data.get('name'), group_data.get('description'),
+                         int(bool(group_data.get('is_default', False))),
+                         json.dumps(group_data.get('permissions', []))),
+                    )
+                    group_id = cursor.lastrowid
+                else:
+                    conn.execute(
+                        """UPDATE groups SET name=?, description=?, is_default=?, permissions=?
+                           WHERE id=?""",
+                        (group_data.get('name'), group_data.get('description'),
+                         int(bool(group_data.get('is_default', False))),
+                         json.dumps(group_data.get('permissions', [])), group_id),
+                    )
                 conn.commit()
-                return True
+                return group_id
             except Exception as e:
-                logger.error(f"Error saving profile {name}: {e}")
+                logger.error(f"Error saving group {group_id}: {e}")
+                conn.rollback()
+                return -1
+            finally:
+                conn.close()
+
+    def delete_group(self, group_id: int) -> bool:
+        """Delete an unreferenced, non-default authorization group."""
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                group = conn.execute(
+                    'SELECT is_default FROM groups WHERE id=?', (group_id,)
+                ).fetchone()
+                if not group or group['is_default']:
+                    return False
+                if any(
+                    group_id in self._json_list(row['groups'])
+                    for row in conn.execute('SELECT groups FROM users').fetchall()
+                ):
+                    return False
+                owner = f'group:{group_id}'
+                if conn.execute('SELECT 1 FROM api_keys WHERE owner=? LIMIT 1', (owner,)).fetchone():
+                    return False
+                if conn.execute(
+                    """SELECT 1 FROM channel_owners
+                       WHERE owner_type='group' AND owner_id=? LIMIT 1""",
+                    (str(group_id),),
+                ).fetchone():
+                    return False
+                cursor = conn.execute('DELETE FROM groups WHERE id=?', (group_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.error(f"Error deleting group {group_id}: {e}")
                 conn.rollback()
                 return False
             finally:
                 conn.close()
-    
-    def delete_profile(self, name: str) -> bool:
-        """Delete a profile."""
-        with _db_lock:
-            conn = self._get_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM profiles WHERE name = ?', (name,))
-                conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error deleting profile {name}: {e}")
-                conn.rollback()
-                return False
-            finally:
-                conn.close()
-    
+
     # ==================== TAGS METHODS ====================
     
     def get_all_tags(self) -> List[Dict[str, Any]]:
@@ -959,8 +782,19 @@ class SettingsManager:
                             channel_data.get('speaker_enabled', 0),
                             channel_data.get('speaker_volume')
                         ))
-                        conn.commit()
                         lastrowid = cursor.lastrowid
+                        default_group = cursor.execute(
+                            'SELECT id FROM groups WHERE is_default=1 ORDER BY id LIMIT 1'
+                        ).fetchone()
+                        if not default_group:
+                            raise RuntimeError('Default authorization group is not configured')
+                        cursor.execute(
+                            """INSERT INTO channel_owners
+                               (channel_id, owner_type, owner_id)
+                               VALUES (?, 'group', ?)""",
+                            (lastrowid, str(default_group['id'])),
+                        )
+                        conn.commit()
                         logger.debug(f"Inserted new channel, lastrowid: {lastrowid}")
                         return lastrowid
                     except Exception as insert_error:
@@ -998,126 +832,250 @@ class SettingsManager:
             finally:
                 conn.close()
     
-    # ==================== TOKENS METHODS ====================
-    
-    def get_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Get a token."""
+    # ==================== CREDENTIAL METHODS ====================
+
+    @staticmethod
+    def hash_credential(token: str) -> str:
+        """Hash a plaintext credential for lookup and persistence."""
+        return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+    def issue_credential(self, principal_type: str, principal_id: str,
+                         expires_at: Optional[str] = None,
+                         token: Optional[str] = None) -> tuple[str, str]:
+        """Issue and persist a hashed credential."""
+        token = token or secrets.token_urlsafe(32)
+        credential_id = str(uuid.uuid4())
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM tokens WHERE token = ?', (token,))
-                row = cursor.fetchone()
-                if row:
-                    token_data = dict(row)
-                    if token_data.get('device_info'):
-                        try:
-                            token_data['device_info'] = json.loads(token_data['device_info'])
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            token_data['device_info'] = {}
-                    return token_data
+                conn.execute(
+                    """INSERT INTO credentials
+                       (id, principal_type, principal_id, token_hash, created_at, expires_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (credential_id, principal_type, str(principal_id),
+                     self.hash_credential(token), datetime.now(timezone.utc).isoformat(),
+                     expires_at),
+                )
+                conn.commit()
+                return token, credential_id
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def inspect_credential(self, token: str):
+        """Return a credential and diagnostic result without mutating it."""
+        if not token:
+            return None, 'missing'
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    'SELECT * FROM credentials WHERE token_hash = ?',
+                    (self.hash_credential(token),),
+                ).fetchone()
+            finally:
+                conn.close()
+        if not row:
+            return None, 'not_found'
+        try:
+            expires_at = row['expires_at']
+            if expires_at:
+                parsed = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if parsed <= datetime.now(timezone.utc):
+                    return None, 'expired'
+        except (TypeError, ValueError):
+            return None, 'expired'
+        return dict(row), 'success'
+
+    def get_credential_record(self, token: str) -> Optional[Dict[str, Any]]:
+        """Return a credential row regardless of expiry for diagnostics."""
+        if not token:
+            return None
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    'SELECT * FROM credentials WHERE token_hash=?',
+                    (self.hash_credential(token),),
+                ).fetchone()
+                return dict(row) if row else None
+            finally:
+                conn.close()
+
+    def get_credential(self, token: str) -> Optional[Dict[str, Any]]:
+        """Return a current credential for a plaintext token."""
+        credential, _ = self.inspect_credential(token)
+        return credential
+
+    def get_principal(self, principal_type: str, principal_id: str) -> Optional[Dict[str, Any]]:
+        """Materialize the current authorization principal for a credential."""
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                if principal_type == 'user':
+                    row = conn.execute(
+                        """SELECT email, name, role, status, access_level, groups
+                           FROM users WHERE email=?""",
+                        (principal_id,),
+                    ).fetchone()
+                    if not row:
+                        return None
+                    principal = dict(row)
+                    group_ids = self._json_list(principal.pop('groups', None))
+                    permissions = self._group_permissions(conn, group_ids)
+                    principal.update({
+                        'id': principal['email'],
+                        'type': 'user',
+                        'groups': group_ids,
+                        'permissions': permissions,
+                        'owner_ids': None if principal.get('role') == 'admin' else [
+                            f"user:{principal['email']}",
+                            *(f'group:{group_id}' for group_id in group_ids),
+                        ],
+                    })
+                    return principal
+
+                if principal_type == 'api_key':
+                    row = conn.execute(
+                        'SELECT * FROM api_keys WHERE id=?', (principal_id,)
+                    ).fetchone()
+                    if not row:
+                        return None
+                    principal = dict(row)
+                    principal['permissions'] = self._json_list(principal.get('permissions'))
+                    owner = principal.get('owner')
+                    owner_ids = [owner] if owner else []
+                    if owner and owner.startswith('user:'):
+                        owner_user = conn.execute(
+                            'SELECT role, groups FROM users WHERE email=?',
+                            (owner[5:],),
+                        ).fetchone()
+                        if owner_user and owner_user['role'] == 'admin':
+                            owner_ids = None
+                        elif owner_user:
+                            owner_ids.extend(
+                                f'group:{group_id}'
+                                for group_id in self._json_list(owner_user['groups'])
+                            )
+                    principal.update({'type': 'api_key', 'owner_ids': owner_ids})
+                    return principal
+
+                if principal_type == 'device':
+                    row = conn.execute(
+                        'SELECT * FROM channels WHERE id=? AND deleted=0',
+                        (principal_id,),
+                    ).fetchone()
+                    if not row:
+                        return None
+                    principal = dict(row)
+                    principal.update({
+                        'type': 'device',
+                        'permissions': ['device'],
+                        'owner_ids': [f"channel:{principal['id']}"],
+                    })
+                    return principal
                 return None
             finally:
                 conn.close()
 
-    def get_all_tokens(self) -> Dict[str, Dict[str, Any]]:
-        """Get all tokens as a dictionary keyed by token."""
-        started_at = time.perf_counter()
+    @staticmethod
+    def _json_list(value) -> list:
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(value or '[]')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    @classmethod
+    def _group_permissions(cls, conn, group_ids) -> list[str]:
+        if not group_ids:
+            return []
+        placeholders = ','.join('?' for _ in group_ids)
+        permissions = set()
+        for row in conn.execute(
+            f'SELECT permissions FROM groups WHERE id IN ({placeholders})', group_ids
+        ).fetchall():
+            permissions.update(cls._json_list(row['permissions']))
+        return sorted(permissions)
+
+    def delete_credential(self, token: str) -> bool:
+        """Delete a credential by its plaintext token."""
+        if not token:
+            return False
         with _db_lock:
-            lock_wait_ms = (time.perf_counter() - started_at) * 1000
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM tokens')
-                tokens = {}
-                for row in cursor.fetchall():
-                    token_data = dict(row)
-                    if token_data.get('device_info'):
-                        try:
-                            token_data['device_info'] = json.loads(token_data['device_info'])
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            token_data['device_info'] = {}
-                    tokens[token_data['token']] = token_data
-                return tokens
-            finally:
-                conn.close()
-                log_slow_operation(
-                    database="settings",
-                    operation="get_all_tokens",
-                    started_at=started_at,
-                    lock_wait_ms=lock_wait_ms,
-                    rows=len(tokens) if 'tokens' in locals() else None,
+                cursor = conn.execute(
+                    'DELETE FROM credentials WHERE token_hash = ?',
+                    (self.hash_credential(token),),
                 )
-    
-    def save_token(self, token: str, token_data: Dict[str, Any]) -> bool:
-        """Save or update a token."""
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def delete_expired_credentials(self, now: Optional[str] = None,
+                                   principal_type: Optional[str] = None,
+                                   principal_id: Optional[str] = None) -> int:
+        """Delete expired credentials and return the number removed."""
+        now = now or datetime.now(timezone.utc).isoformat()
+        where = 'expires_at IS NOT NULL AND expires_at <= ?'
+        parameters = [now]
+        if principal_type is not None:
+            where += ' AND principal_type=?'
+            parameters.append(principal_type)
+        if principal_id is not None:
+            where += ' AND principal_id=?'
+            parameters.append(str(principal_id))
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                device_info = json.dumps(token_data.get('device_info', {}))
-                
-                cursor.execute('''
-                    INSERT OR REPLACE INTO tokens 
-                    (token, email, user_id, role, mac_address, created_at, 
-                     expires_at, last_activity, device_info)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    token,
-                    token_data.get('email'),
-                    token_data.get('user_id'),
-                    token_data.get('role'),
-                    token_data.get('mac_address'),
-                    token_data.get('created_at'),
-                    token_data.get('expires_at'),
-                    token_data.get('last_activity'),
-                    device_info
-                ))
+                cursor = conn.execute(
+                    f'DELETE FROM credentials WHERE {where}',
+                    parameters,
+                )
                 conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error saving token: {e}")
+                return cursor.rowcount
+            except Exception:
                 conn.rollback()
-                return False
+                raise
             finally:
                 conn.close()
-    
-    def delete_token(self, token: str) -> bool:
-        """Delete a token."""
+
+    def count_credentials(self) -> int:
+        """Return the number of stored credentials."""
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM tokens WHERE token = ?', (token,))
-                conn.commit()
-                return True
-            except Exception as e:
-                logger.error(f"Error deleting token: {e}")
-                conn.rollback()
-                return False
+                return conn.execute('SELECT COUNT(*) FROM credentials').fetchone()[0]
             finally:
                 conn.close()
-    
-    def delete_expired_tokens(self) -> int:
-        """Delete all expired tokens. Returns count of deleted tokens."""
+
+    def has_current_credential(self, principal_type: str, principal_id: str) -> bool:
+        """Return whether a principal has at least one unexpired credential."""
+        now = datetime.now(timezone.utc).isoformat()
         with _db_lock:
             conn = self._get_connection()
             try:
-                cursor = conn.cursor()
-                # Match the timezone-aware UTC ("+00:00") format that tokens are
-                # stored with, so this string comparison is chronologically correct.
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute('DELETE FROM tokens WHERE expires_at < ?', (now,))
-                deleted_count = cursor.rowcount
-                conn.commit()
-                return deleted_count
-            except Exception as e:
-                logger.error(f"Error deleting expired tokens: {e}")
-                conn.rollback()
-                return 0
+                return conn.execute(
+                    """SELECT 1 FROM credentials
+                       WHERE principal_type=? AND principal_id=?
+                         AND (expires_at IS NULL OR expires_at > ?)
+                       LIMIT 1""",
+                    (principal_type, str(principal_id), now),
+                ).fetchone() is not None
             finally:
                 conn.close()
-    
+
     # ==================== PAGINATION PREFERENCES METHODS ====================
     
     def get_pagination_prefs(self, email: str) -> Optional[Dict[str, Any]]:

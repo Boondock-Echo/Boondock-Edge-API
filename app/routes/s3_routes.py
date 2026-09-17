@@ -8,6 +8,7 @@ import threading
 from config import DATA_ROOT
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 from botocore.exceptions import ClientError
 
 from ..utils.s3_utils import get_s3_client, get_s3_settings, is_s3_enabled
@@ -20,6 +21,7 @@ s3_bp = Blueprint('s3', __name__)
 
 
 @s3_bp.route('/s3/backup/start', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['S3 Backup'],
     'summary': 'Start manual backup',
@@ -96,6 +98,7 @@ def start_backup():
 
 
 @s3_bp.route('/s3/backup/status', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Backup'],
     'summary': 'Get S3 backup progress status',
@@ -133,6 +136,7 @@ def get_backup_status():
 
 
 @s3_bp.route('/s3/backup/history', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Backup'],
     'summary': 'Get backup history with pagination',
@@ -173,6 +177,7 @@ def get_backup_history():
 
 
 @s3_bp.route('/s3/restore/list', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'List files available for restore from S3',
@@ -237,6 +242,7 @@ def list_restore_files():
 
 
 @s3_bp.route('/s3/restore/channels', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'List channels with audio files in S3',
@@ -301,6 +307,7 @@ def list_restore_channels():
 
 
 @s3_bp.route('/s3/restore/years', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'List years available for a channel',
@@ -355,6 +362,7 @@ def list_restore_years():
 
 
 @s3_bp.route('/s3/restore/months', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'List months available for a channel and year',
@@ -417,6 +425,7 @@ def list_restore_months():
 
 
 @s3_bp.route('/s3/restore/days', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'List days available for a channel, year, and month',
@@ -490,6 +499,7 @@ def list_restore_days():
 
 
 @s3_bp.route('/s3/restore/execute', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['S3 Restore'],
     'summary': 'Execute restore from S3',
@@ -633,6 +643,7 @@ def execute_restore():
 
 
 @s3_bp.route('/s3/backup/test-samba', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['S3 Backup'],
     'summary': 'Test Samba / network share connection',

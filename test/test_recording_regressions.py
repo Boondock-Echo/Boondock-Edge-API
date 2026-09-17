@@ -10,6 +10,19 @@ from app.routes import recordings_routes
 from app.services import audio_handler as audio_handler_service
 
 
+@pytest.fixture(autouse=True)
+def authenticated_recording_request(monkeypatch):
+    """Existing handler regressions run as an authenticated administrator."""
+    monkeypatch.setattr('app.middleware.auth_middleware.get_request_token', lambda: 'test')
+    monkeypatch.setattr(
+        'app.middleware.auth_middleware.authenticate_token',
+        lambda token: {
+            'type': 'user', 'email': 'admin@example.com', 'role': 'admin',
+            'permissions': [], 'owner_ids': None,
+        },
+    )
+
+
 class StubAudioHandler:
     def __init__(self):
         self.window_arguments = None

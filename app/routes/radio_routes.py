@@ -4,6 +4,7 @@ import re
 import logging
 import time
 from flask import Blueprint, jsonify, request
+from ..middleware.auth_middleware import require_admin
 from serial import Serial, SerialException
 import serial.tools.list_ports
 from ..services.settings_manager import get_settings_manager
@@ -658,6 +659,7 @@ def initialize_scanner_inventory():
 
 # API Routes
 @radio_bp.route('/init', methods=['POST'])
+@require_admin
 def initialize_radio_inventory():
     """Initialize scanner inventory without reprogramming scanners."""
     try:
@@ -668,6 +670,7 @@ def initialize_radio_inventory():
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/clear', methods=['POST'])
+@require_admin
 def clear_scanners():
     """Clear inventory and reset all scanner memories (Channel 1 only)."""
     try:
@@ -692,6 +695,7 @@ def clear_scanners():
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/list', methods=['GET'])
+@require_admin
 def list_scanners():
     """Return a JSON list of all scanners in the inventory."""
     try:
@@ -702,6 +706,7 @@ def list_scanners():
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/<int:scanner_id>/channel/<int:channel>', methods=['POST'])
+@require_admin
 def add_channel_to_radio(scanner_id, channel):
     """Add a new channel to  overwriting any existing channel."""
     try:
@@ -733,6 +738,7 @@ def add_channel_to_radio(scanner_id, channel):
         return jsonify({"error": str(e)}), 500
  
 @radio_bp.route('/<int:scanner_id>/channel/<int:channel>', methods=['GET'])
+@require_admin
 def get_channel_info(scanner_id, channel):
     """Read channel info from the radio with timing for each step."""
     try:
@@ -752,6 +758,7 @@ def get_channel_info(scanner_id, channel):
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/<int:scanner_id>/volume', methods=['POST'])
+@require_admin
 def set_scanner_volume(scanner_id):
     """Add a new channel to  overwriting any existing channel."""
     try:
@@ -781,6 +788,7 @@ def set_scanner_volume(scanner_id):
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/<int:scanner_id>/squelch', methods=['POST'])
+@require_admin
 def set_squelch_level(scanner_id):
     try:
         data = request.get_json()
@@ -809,6 +817,7 @@ def set_squelch_level(scanner_id):
         return jsonify({"error": str(e)}), 500
 
 @radio_bp.route('/<int:scanner_id>/park', methods=['POST'])
+@require_admin
 def park_scanner(scanner_id):
     """Save the Channel 500 settings to Channel 1"""
     try:
@@ -853,6 +862,7 @@ def park_scanner(scanner_id):
 ######################## TEST #######################################################
 
 @radio_bp.route('/<int:scanner_id>/set_backlight', methods=['POST'])
+@require_admin
 def set_backlight(scanner_id):
     try:
         data = request.get_json()
@@ -882,6 +892,7 @@ def set_backlight(scanner_id):
 
 
 @radio_bp.route('/reassign', methods=['POST'])
+@require_admin
 def reassign_scanner_id():
 
     """
@@ -950,6 +961,7 @@ def reassign_scanner_id():
         return jsonify({"error": str(e)}), 500
     
 @radio_bp.route('/restore_ids', methods=['POST'])
+@require_admin
 def restore_scanner_ids():
     """Restore IDs to scanners that have lost them according to inventory."""
     try:
@@ -997,6 +1009,7 @@ def restore_scanner_ids():
 #  new api of edit sacnner details 
 # New Edit Scanner API
 @radio_bp.route('/<scanner_id>', methods=['PUT'])
+@require_admin
 def edit_scanner(scanner_id):
     """
     Edit an existing scanner in the inventory.

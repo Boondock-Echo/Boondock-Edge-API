@@ -9,6 +9,7 @@ import sqlite3
 import logging
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin, require_permission
 
 from app.services.audio_handler import get_audio_handler
 from ..utils.logging_setup import error_logger, event_logger
@@ -36,6 +37,7 @@ def get_available_audio_ports():
 
 
 @channels_bp.route('/available-ports')
+@require_admin
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get available audio stream ports',
@@ -51,6 +53,7 @@ def get_ports():
 
 
 @channels_bp.route('/channels')
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get all channels',
@@ -75,6 +78,7 @@ def get_channels():
 
 
 @channels_bp.route('/channel/<int:channel_id>/recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get recordings for a specific channel',
@@ -97,6 +101,7 @@ def get_channel_recordings(channel_id):
 
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['GET'])
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get a specific channel',
@@ -124,6 +129,7 @@ def get_channel(channel_id):
 
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['PUT'])
+@require_permission(['channel.update'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Update channel configuration',
@@ -258,6 +264,7 @@ def update_channel(channel_id):
 
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['DELETE'])
+@require_permission(['channel.delete'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Delete a channel (soft delete)',
@@ -302,6 +309,7 @@ def delete_channel(channel_id):
 
 
 @channels_bp.route('/channel', methods=['POST'])
+@require_permission(['channel.create'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Create a new channel',
@@ -441,6 +449,7 @@ def create_channel():
 
 
 @channels_bp.route('/channel_by_message/<int:message_id>', methods=['GET'])
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get channel info by recording ID',
@@ -498,6 +507,7 @@ def get_channel_by_message_id(message_id):
 
 
 @channels_bp.route('/v1/channels/<mac_address>', methods=['GET'])
+@require_permission(['device', 'channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get channel data by MAC address',

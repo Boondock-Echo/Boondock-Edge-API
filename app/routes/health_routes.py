@@ -5,6 +5,7 @@ Provides endpoints for retrieving device health statistics.
 
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin, require_auth
 from datetime import datetime, timezone
 
 from ..services.device_health_monitor import (
@@ -238,6 +239,7 @@ def get_system_health():
 
 
 @health_bp.route('/purge', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Health'],
     'summary': 'Force immediate persistence of health data to database',
@@ -272,6 +274,7 @@ def force_purge_health():
 
 
 @notification_bp.route('', methods=['GET'])
+@require_auth
 @swag_from({
     'tags': ['Notifications'],
     'summary': 'Get active notifications',
@@ -313,6 +316,7 @@ def get_notifications():
 
 
 @notification_bp.route('/<notification_id>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Notifications'],
     'summary': 'Remove a notification',
@@ -344,6 +348,7 @@ def delete_notification(notification_id):
 
 
 @notification_bp.route('/clear', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Notifications'],
     'summary': 'Clear all notifications',

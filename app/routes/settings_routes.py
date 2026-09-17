@@ -9,6 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 import pytz
 
 from ..routes.route_utils import init_settings
@@ -28,6 +29,7 @@ _summary_metrics_cache = {}
 
 
 @settings_bp.route('/settings', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Get all settings',
@@ -104,6 +106,7 @@ def _summary_cache_set(cache_key, payload):
 
 
 @settings_bp.route('/settings/summary/metrics', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Get lightweight dashboard summary metrics',
@@ -228,6 +231,7 @@ def get_summary_metrics():
         return jsonify({'error': 'Failed to get summary metrics'}), 500
 
 @settings_bp.route('/settings', methods=['PUT'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Update settings',
@@ -392,6 +396,7 @@ def update_settings():
 
 
 @settings_bp.route('/settings/restart-service', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Restart the Boondock Edge system service',
@@ -435,6 +440,7 @@ def restart_system_service():
 
 
 @settings_bp.route('/reboot', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Reboot the Boondock Edge application service',
@@ -453,6 +459,7 @@ def reboot_application():
 
 
 @settings_bp.route('/settings/keywords', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Add a keyword',
@@ -526,6 +533,7 @@ def add_keyword():
 
 
 @settings_bp.route('/settings/keywords/<keyword>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Settings'],
     'summary': 'Remove a keyword',
