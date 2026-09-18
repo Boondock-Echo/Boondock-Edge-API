@@ -105,7 +105,7 @@ def test_decorators_use_flat_principal_any_permission_and_admin_bypass(monkeypat
         'key': {'type': 'api_key', 'id': 'key-1', 'permissions': ['recording.create']},
     }
     monkeypatch.setattr(
-        'app.middleware.auth_middleware.authenticate_token',
+        'app.utils.auth.authenticate_token',
         lambda token: principals.get(token),
     )
 

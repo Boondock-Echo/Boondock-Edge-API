@@ -10,9 +10,9 @@ from app.services import db_initializer, settings_manager
 
 @pytest.fixture(autouse=True)
 def authenticated_route_request(monkeypatch):
-    monkeypatch.setattr('app.middleware.auth_middleware.get_request_token', lambda: 'test')
+    monkeypatch.setattr('app.utils.auth.get_request_token', lambda: 'test')
     monkeypatch.setattr(
-        'app.middleware.auth_middleware.authenticate_token',
+        'app.utils.auth.authenticate_token',
         lambda token: {
             'type': 'user', 'email': 'admin@example.com', 'role': 'admin',
             'permissions': [], 'owner_ids': None,
