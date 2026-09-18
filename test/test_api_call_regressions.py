@@ -10,8 +10,6 @@ EXPECTED_API_CALLS = {
     'POST /api/auth/logout',
     'GET /api/auth/verify',
     'GET /api/available-ports',
-    'GET /api/branding',
-    'PUT /api/branding',
     'POST /api/channel',
     'DELETE /api/channel/<int:channel_id>',
     'GET /api/channel/<int:channel_id>',

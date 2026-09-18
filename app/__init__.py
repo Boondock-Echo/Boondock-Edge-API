@@ -79,7 +79,6 @@ def create_app(config_class=Config):
     # Import and register blueprints inside create_app to avoid circular imports
 
     from app.routes.auth_routes import auth_bp, mfa_bp
-    from app.routes.branding_routes import branding_bp
     from app.routes.channels_routes import channels_bp
     from app.routes.recordings_routes import recordings_bp
     from app.routes.transcription_routes import transcription_bp
@@ -108,7 +107,6 @@ def create_app(config_class=Config):
     from app.routes.external_api_routes import external_api_bp
 
     # Register all blueprints with /api prefix
-    app.register_blueprint(branding_bp, url_prefix='/api/branding')
     # TO-DO non-standard channel_bp routes
     app.register_blueprint(channels_bp, url_prefix='/api')
     # TO-DO non-standard recordings_bp routes
