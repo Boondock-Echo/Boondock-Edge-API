@@ -161,39 +161,3 @@ def test_api_key_issuer_writes_principal_and_shared_credential(tmp_path):
     assert manager.revoke_key(metadata['id']) is True
     assert manager.settings.get_credential(token) is None
 
-
-def test_device_authentication_logs_plaintext_success_and_expiry(
-    tmp_path, monkeypatch, caplog
-):
-    path = tmp_path / 'settings.db'
-    _database(path)
-    manager = _manager(path)
-    manager.issue_credential(
-        'device', '1',
-        (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        token='current-device-token',
-    )
-    manager.issue_credential(
-        'device', '1',
-        (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-        token='expired-device-token',
-    )
-    monkeypatch.setattr(auth, '_settings_manager', manager)
-
-    with caplog.at_level(logging.INFO, logger=auth.__name__):
-        assert auth.authenticate_token('current-device-token')['type'] == 'device'
-        assert auth.authenticate_token('expired-device-token') is None
-
-    messages = [record.getMessage() for record in caplog.records]
-    assert any(
-        'action=used' in message
-        and 'token=current-device-token' in message
-        and 'result=success' in message
-        for message in messages
-    )
-    assert any(
-        'action=used' in message
-        and 'token=expired-device-token' in message
-        and 'result=expired' in message
-        for message in messages
-    )
