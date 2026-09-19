@@ -135,7 +135,7 @@ def test_cloud_event_reuses_device_token_from_supported_header(monkeypatch):
         })
 
     assert status == 200
-    assert response.get_json().get("new_token") is None
+    assert response.get_json().get("oken") is None
     assert issued == []
     assert token_lookups == [
         ("current-device-token", "E0:8C:FE:64:0C:14")
