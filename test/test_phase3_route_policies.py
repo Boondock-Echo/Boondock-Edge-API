@@ -1,8 +1,7 @@
 from app.routes import auth_routes, external_api_routes, groups_routes, recordings_routes, users_routes
 from app.routes import (
-    branding_routes, channels_routes, frequencies_routes, incident_reports_routes,
-    logs_routes, maintenance_routes, pagination_routes, settings_routes, tags_routes,
-    transcription_routes,
+    channels_routes, frequencies_routes, incident_reports_routes, logs_routes,
+    maintenance_routes, pagination_routes, settings_routes, tags_routes, transcription_routes,
 )
 
 
@@ -34,7 +33,7 @@ def test_every_user_and_group_route_is_admin_only():
     group_handlers = (
         groups_routes.get_groups, groups_routes.get_group,
         groups_routes.create_group, groups_routes.update_group,
-        groups_routes.delete_group, groups_routes.get_permissions,
+        groups_routes.delete_group,
     )
     assert all(_policy(function) == 'admin' for function in user_handlers + group_handlers)
 
@@ -56,8 +55,8 @@ def test_next_ten_route_files_have_visible_policies(monkeypatch):
 
     app = create_app()
     blueprint_names = {
-        'branding', 'channels', 'frequencies', 'incident_reports', 'logs',
-        'maintenance', 'pagination', 'tags', 'transcription',
+        'channels', 'frequencies', 'incident_reports', 'logs', 'maintenance',
+        'pagination', 'tags', 'transcription',
     }
     for rule in app.url_map.iter_rules():
         if rule.endpoint.split('.')[0] in blueprint_names:

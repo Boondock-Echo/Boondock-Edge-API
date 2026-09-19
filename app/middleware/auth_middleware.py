@@ -34,7 +34,7 @@ def require_permission(permissions, loader=None, id_argument=None, inject_as=Non
     def decorator(function):
         @wraps(function)
         def decorated_function(*args, **kwargs):
-            failure = authenticate()
+            failure = authenticate(device_request='device' in permissions)
             if failure:
                 return failure
             principal = g.principal

@@ -123,12 +123,13 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install pytest
 
       - name: Run API tests
         run: |
           set -euo pipefail
 
-          python -m unittest discover -s test
+          python -m pytest -q
 
       - name: Generate build metadata
         shell: bash

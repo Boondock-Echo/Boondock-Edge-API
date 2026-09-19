@@ -33,6 +33,7 @@ from app.services.channel_state import (
 )
 from ..utils.logging_setup import error_logger, event_logger
 from ..utils.auth import (
+    get_request_token,
     authenticate_token,
     is_mac_registered,
     generate_token,
@@ -428,6 +429,31 @@ def _normalize_cloud_mac_address(mac_str):
         return None
     return ":".join(hx[i : i + 2] for i in range(0, 12, 2))
 
+def _with_device_bootstrap_token(result, mac_address):
+    """Attach a device credential to a successful event response when needed."""
+    response, status = result
+    if status >= 400:
+        return result
+
+    normalized_mac = _normalize_cloud_mac_address(mac_address)
+    token = get_request_token()
+    token_mac = (
+        get_mac_for_token(token, expected_mac=normalized_mac)
+        if token and normalized_mac else None
+    )
+    if token_mac:
+        return result
+
+    issued_token, expires_at = generate_token(normalized_mac)
+    if not issued_token:
+        return jsonify({"error": "Failed to issue device token"}), 500
+
+    body = response.get_json() or {}
+    body["token"] = issued_token
+    body["expires_at"] = expires_at
+    response = jsonify(body)
+    response.headers["Cache-Control"] = "no-store"
+    return response, status
 
 def _handle_cloud_style_device_event(data):
     """Cloud API: JSON body mac_address, event_type, optional event_data (DEVICE_API.md)."""
@@ -453,12 +479,11 @@ def _handle_cloud_style_device_event(data):
             return jsonify({"error": "Failed to create channel"}), 500
         track_device_created(mac_key)
 
-    auth_header = request.headers.get("Authorization")
-    token = (
-        auth_header.split("Bearer ")[1]
-        if auth_header and auth_header.startswith("Bearer ")
-        else None
-    )
+    # Use the unified token transport parser here as well.  The previous local
+    # parser accepted only an exact ``Authorization: Bearer `` prefix, so a
+    # valid device credential sent through X-API-Key (or a case-variant bearer
+    # scheme) was treated as missing and a replacement credential was issued.
+    token = get_request_token()
     warning = None
     new_token = None
     expires_at = None
@@ -467,7 +492,10 @@ def _handle_cloud_style_device_event(data):
         new_token, expires_at = generate_token(mac_colon)
         warning = "MAC address registered"
 
-    token_mac = get_mac_for_token(token) if token else None
+    # Always perform the diagnostic lookup.  Besides validating a presented
+    # credential, this records an explicit ``missing`` result before bootstrap
+    # issues a credential when the device did not send one.
+    token_mac = get_mac_for_token(token, expected_mac=mac_colon)
     token_hex = _mac_hex_only(token_mac) if token_mac else ""
     token_valid = bool(
         token_hex
@@ -516,7 +544,7 @@ def _handle_cloud_style_device_event(data):
     if warning:
         body["warning"] = warning
     if new_token:
-        body["new_token"] = new_token
+        body["token"] = new_token
         body["expires_at"] = expires_at
     return jsonify(body), 200
 
@@ -609,7 +637,9 @@ def handle_event_legacy():
 def post_v1_events():
     """Dispatch legacy Edge (?mac=) vs cloud-style JSON lifecycle events."""
     if request.args.get("mac"):
-        return _handle_legacy_events_post()
+        return _with_device_bootstrap_token(
+            _handle_legacy_events_post(), request.args.get("mac")
+        )
     data = request.get_json(silent=True)
     if isinstance(data, dict):
         ma = (data.get("mac_address") or "").strip()

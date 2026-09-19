@@ -46,7 +46,7 @@ def test_cloud_transcription_uses_supplied_settings_key(monkeypatch, tmp_path):
     assert result == 'done'
     assert captured['headers']['X-Boondock-Key'] == 'dashboard-key'
     assert captured['timeout'] == 60
-    assert captured['data'] == {'model_id': 'scribe_v1'}
+    assert captured['data'] == {'model_id': 'whisper-large-v3-turbo'}
 
 
 def test_cloud_transcription_rejects_missing_settings_key(monkeypatch, tmp_path):

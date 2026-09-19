@@ -1,7 +1,10 @@
 import logging
 import time
 
+from flask import Flask
+
 from app.services import cloud_device_events
+from app.routes import device_routes
 from app.utils import sqlite_utils
 
 
@@ -94,3 +97,34 @@ def test_cloud_event_batch_is_persisted_and_listed(monkeypatch, tmp_path):
 
     assert [event["event_type"] for event in events] == ["status", "ping"]
     assert events[1]["payload"] == {"sequence": 1}
+
+def test_cloud_event_logs_missing_lookup_before_issuing_token(monkeypatch):
+    app = Flask(__name__)
+    token_lookups = []
+
+    monkeypatch.setattr(device_routes, "get_channel_id_from_mac", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(device_routes, "is_mac_registered", lambda mac: True)
+    monkeypatch.setattr(
+        device_routes,
+        "get_mac_for_token",
+        lambda token, expected_mac=None: token_lookups.append((token, expected_mac)),
+    )
+    monkeypatch.setattr(
+        device_routes, "generate_token", lambda mac: ("new-device-token", "later")
+    )
+    monkeypatch.setattr(device_routes, "persist_cloud_device_event_async", lambda *args: None)
+    monkeypatch.setattr(device_routes, "touch_device_activity", lambda *args: None)
+    monkeypatch.setattr(device_routes, "track_connection", lambda *args: None)
+    monkeypatch.setattr(device_routes, "track_event", lambda *args: None)
+    monkeypatch.setattr(device_routes, "get_stored_visual_state", lambda *args: None)
+    monkeypatch.setattr(device_routes, "set_channel_visual_state", lambda *args: None)
+
+    with app.test_request_context("/api/v1/events", method="POST"):
+        response, status = device_routes._handle_cloud_style_device_event({
+            "mac_address": "E0:8C:FE:64:0C:14",
+            "event_type": "ping",
+        })
+
+    assert status == 200
+    assert response.get_json()["token"] == "new-device-token"
+    assert token_lookups == [(None, "E0:8C:FE:64:0C:14")]

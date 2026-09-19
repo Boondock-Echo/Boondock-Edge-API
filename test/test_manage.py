@@ -11,6 +11,11 @@ def _setup_document():
     return {
         "admin": {"email": "Admin@Example.com", "password": "ChangeMe123!"},
         "selected_devices": ["boondock_edge"],
+        "wifi": {
+            "ssid": "boondockedge",
+            "password": "edge@123",
+            "ip_address": "10.42.0.1",
+        },
         "preferences": {
             "inbox_view": "continuous",
             "message_sorting": "newest",
@@ -97,14 +102,15 @@ def _initialize_and_capture_settings(monkeypatch, tmp_path, document):
     return saved_settings, autoconfigured
 
 
-def test_initialize_does_not_write_wifi_settings(monkeypatch, tmp_path):
+def test_initialize_writes_installer_wifi_settings(monkeypatch, tmp_path):
     document = _setup_document()
 
     saved_settings, autoconfigured = _initialize_and_capture_settings(monkeypatch, tmp_path, document)
 
     assert not (tmp_path / "db" / "admin.json").exists()
-    assert "host_ssid" not in saved_settings
-    assert "host_password" not in saved_settings
+    assert saved_settings["host_ssid"] == "boondockedge"
+    assert saved_settings["host_password"] == "edge@123"
+    assert saved_settings["host_ip"] == "10.42.0.1"
     assert "hotspot_initial_setup_done" not in saved_settings
     assert len(autoconfigured) == 1
 

@@ -17,13 +17,29 @@ def get_request_token():
         return authorization[7:].strip() or None
     return (request.headers.get('X-API-Key') or '').strip() or None
 
-def authenticate():
+def authenticate(device_request=False):
     """Get the token and authenticate it."""
     token = get_request_token()
     if not token:
+        if device_request:
+            mac_address = (
+                request.headers.get('X-Device-MAC')
+                or request.args.get('mac')
+                or request.form.get('mac_address')
+                or ''
+            )
+        log.info(
+            'authentication_rejected route=%s token= result=missing',
+            request.path,
+        )
         return jsonify({'error': 'Authentication required'}), 401
     principal = authenticate_token(token)
     if principal is None:
+        log.info(
+            'authentication_rejected route=%s token=%s result=invalid_or_expired',
+            request.path,
+            token,
+        )
         return jsonify({'error': 'Invalid or expired token'}), 401
     g.principal = principal
     request.current_user = principal
@@ -35,14 +51,6 @@ def authenticate_token(token):
     diagnostic_credential = credential
     if diagnostic_credential is None and result == 'expired':
         diagnostic_credential = _settings_manager.get_credential_record(token)
-    if diagnostic_credential and diagnostic_credential['principal_type'] == 'device':
-        device = _settings_manager.get_principal(
-            'device', diagnostic_credential['principal_id']
-        )
-        _device_activity(
-            'used', device.get('mac') if device else '', token,
-            result if device else 'not_found',
-        )
     if result != 'success' or not credential:
         return None
     principal = _settings_manager.get_principal(
@@ -59,13 +67,6 @@ def _normalize_mac(value):
     compact = compact.upper()
     return ':'.join(compact[index:index + 2] for index in range(0, 12, 2))
 
-def _device_activity(action, mac_address, token, result):
-    log.info(
-        'time=%s action=%s route=%s mac_address=%s token=%s result=%s',
-        datetime.now(timezone.utc).isoformat(), action,
-        request.path if has_request_context() else '', mac_address or '', token or '', result,
-    )
-
 def is_mac_registered(mac_address):
     """Return whether a MAC has an existing unexpired device credential."""
     channel = _settings_manager.get_channel_by_mac(_normalize_mac(mac_address)) if mac_address else None
@@ -75,35 +76,23 @@ def generate_token(mac_address, expiry_hours=None):
     """Issue an additional device credential for an existing channel."""
     channel = _settings_manager.get_channel_by_mac(_normalize_mac(mac_address))
     if not channel:
-        _device_activity('issued', mac_address, '', 'not_found')
         return None, None
-    replaced = _settings_manager.delete_expired_credentials(
-        principal_type='device', principal_id=channel['id']
-    )
     expires_at = datetime.now(timezone.utc) + timedelta(
         hours=expiry_hours if expiry_hours is not None else TOKEN_EXPIRY_HOURS
     )
     token, _ = _settings_manager.issue_credential(
         'device', str(channel['id']), expires_at.isoformat()
     )
-    _device_activity('replaced' if replaced else 'issued', mac_address, token, 'success')
     return token, expires_at.isoformat()
 
 def get_mac_for_token(token, expected_mac=None):
     """Resolve a device token and log the diagnostic result."""
     credential, result = _settings_manager.inspect_credential(token)
-    mac_address = expected_mac or ''
     if credential and credential['principal_type'] == 'device':
         principal = _settings_manager.get_principal('device', credential['principal_id'])
         if principal:
             actual_mac = principal.get('mac') or ''
             if expected_mac and _normalize_mac(actual_mac) != _normalize_mac(expected_mac):
-                _device_activity('used', expected_mac, token, 'mismatch')
                 return None
-            _device_activity('used', actual_mac, token, 'success')
             return actual_mac
-        result = 'not_found'
-    elif credential:
-        result = 'mismatch'
-    _device_activity('used', mac_address, token, result)
     return None
