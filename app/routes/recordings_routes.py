@@ -25,7 +25,6 @@ from ..routes.route_utils import (
     calculate_wav_duration,
 )
 from ..services.settings_manager import get_settings_manager
-from ..services.channel_state import load_owned_recordings, load_request_recording
 from ..services.device_health_monitor import (
     track_device_created,
     track_file_upload,
@@ -102,7 +101,7 @@ def upload_audio_queue():
 
 
 @recordings_bp.route('/uploads/<filename>/status', methods=['GET'])
-@require_admin
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Audio'],
     'summary': 'Get upload processing status',
@@ -496,7 +495,7 @@ def purge_queue_logs():
 
 
 @recordings_bp.route('/recordings')
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get all recordings',
@@ -504,13 +503,14 @@ def purge_queue_logs():
         '200': {'description': 'List of all recordings'}
     }
 })
-def get_recordings(recordings):
-    return jsonify(recordings)
+def get_recordings():
+    audio_handler = get_audio_handler()
+    return jsonify(audio_handler.get_all_recordings() if audio_handler else [])
 
 
 @recordings_bp.route('/recordings/inbox', methods=['GET'])
 @recordings_bp.route('/recordings/inbox/range', methods=['GET'])
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Retrieve inbox recordings',
@@ -550,25 +550,33 @@ def get_recordings(recordings):
         '500': {'description': 'Server error'}
     }
 })
-def get_recordings_inbox(recordings):
+def get_recordings_inbox():
     try:
-        limit = request.args.get('limit', default=1000, type=int) or 1000
-        limit = max(1, min(limit, 5000))
+        limit = request.args.get('limit', default=1000, type=int)
+        since_timestamp = request.args.get('since_timestamp', default=None, type=str)
+        before_timestamp = request.args.get('before_timestamp', default=None, type=str)
+        before_id = request.args.get('before_id', default=None, type=int)
 
-        has_more = len(recordings) > limit
-        recordings = recordings[:limit]
-        last = recordings[-1] if recordings else None
+        audio_handler = get_audio_handler()
+        if not audio_handler:
+            return jsonify({
+                'recordings': [],
+                'meta': {
+                    'limit': limit or 1000,
+                    'returned': 0,
+                    'has_more': False,
+                    'next_before_timestamp': None,
+                    'next_before_id': None,
+                }
+            }), 200
 
-        return jsonify({
-            'recordings': recordings,
-            'meta': {
-                'limit': limit,
-                'returned': len(recordings),
-                'has_more': has_more,
-                'next_before_timestamp': last.get('timestamp') if has_more and last else None,
-                'next_before_id': last.get('id') if has_more and last else None,
-            }
-        }), 200
+        result = audio_handler.get_recordings_inbox_window(
+            limit=limit,
+            since_timestamp=since_timestamp,
+            before_timestamp=before_timestamp,
+            before_id=before_id,
+        )
+        return jsonify(result), 200
     except Exception as e:
         error_logger.error(f"Error getting inbox recordings window: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
@@ -576,7 +584,7 @@ def get_recordings_inbox(recordings):
 
 
 @recordings_bp.route('/recordings/inbox/count', methods=['GET'])
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Total inbox count for a time window',
@@ -613,16 +621,30 @@ def get_recordings_inbox(recordings):
         '500': {'description': 'Server error'}
     }
 })
-def get_recordings_inbox_count(recordings):
+def get_recordings_inbox_count():
     """Return total recordings count matching the inbox window filters."""
-    return jsonify({'total': len(recordings)}), 200
+    try:
+        since_timestamp = request.args.get('since_timestamp', default=None, type=str)
+        before_timestamp = request.args.get('before_timestamp', default=None, type=str)
+        before_id = request.args.get('before_id', default=None, type=int)
+
+        audio_handler = get_audio_handler()
+        if not audio_handler:
+            return jsonify({'total': 0}), 200
+
+        result = audio_handler.get_recordings_inbox_count(
+            since_timestamp=since_timestamp,
+            before_timestamp=before_timestamp,
+            before_id=before_id,
+        )
+        return jsonify(result), 200
+    except Exception as e:
+        error_logger.error(f"Error counting inbox recordings: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @recordings_bp.route('/recordings/<path:filename>')
-@require_permission(
-    ['recording.read'], loader=load_request_recording,
-    id_argument='filename', inject_as='recording'
-)
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Serve audio file',
@@ -640,19 +662,18 @@ def get_recordings_inbox_count(recordings):
         '404': {'description': 'File not found'}
     }
 })
-def serve_audio(filename, recording):
-    file_path = _resolve_recording_path(recording.get('filename'))
+def serve_audio(filename):
+    # Construct the full file path
+    # Support both old structure (channel_X/audio_*.wav) and new structure (MAC/YYYY/MM/DD/*.wav)
+    file_path = _resolve_recording_path(RECORDINGS_DIR / filename)
     if file_path is None or not file_path.is_file():
         return abort(404, description="Audio file not found")
 
+    # Extract the directory and filename for send_from_directory
     return send_from_directory(file_path.parent, file_path.name)
 
-
 @recordings_bp.route('/recordings/<int:recording_id>', methods=['DELETE'])
-@require_permission(
-    ['recording.delete'], loader=load_request_recording,
-    id_argument='recording_id', inject_as='recording'
-)
+@require_permission(['recording.delete'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Delete a recording',
@@ -671,11 +692,20 @@ def serve_audio(filename, recording):
         '500': {'description': 'Database error'}
     }
 })
-def delete_recording(recording_id, recording):
+def delete_recording(recording_id):
     """Delete a specific recording by ID."""
     conn = None
     try:
-        filename = recording.get('filename')
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Get the filename before deleting the database row.
+        cursor.execute("SELECT filename FROM recordings WHERE id = ?", (recording_id,))
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({"error": "Recording not found"}), 404
+
+        filename = result[0]
         file_path = _resolve_recording_path(filename) if filename else None
 
         if filename and file_path is None:
@@ -684,8 +714,7 @@ def delete_recording(recording_id, recording):
         # Commit the database deletion before touching the filesystem. This avoids
         # leaving a live database row pointing at a file that was already removed
         # if the database operation fails.
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
+        cursor.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
         conn.commit()
 
         file_deleted = False
@@ -716,17 +745,14 @@ def delete_recording(recording_id, recording):
             conn.close()
 
 
-@recordings_bp.route('/audio_url/<int:recording_id>', methods=['GET'])
-@require_permission(
-    ['recording.read'], loader=load_request_recording,
-    id_argument='recording_id', inject_as='recording'
-)
+@recordings_bp.route('/audio_url/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get audio URL for a recording',
     'parameters': [
         {
-            'name': 'recording_id',
+            'name': 'message_id',
             'in': 'path',
             'type': 'integer',
             'required': True,
@@ -739,46 +765,83 @@ def delete_recording(recording_id, recording):
         '500': {'description': 'Server error'}
     }
 })
-def get_audio_url(recording_id, recording):
+def get_audio_url(message_id):
     """
-    Return audio URL information for a recording.
+    Return the audio file for a given recording_id (message_id).
     Responds with the audio file as an attachment if found.
     """
+    conn = None
     try:
-        filename = recording.get('filename')
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT filename, timestamp, channel_id FROM recordings WHERE id = ?", (message_id,))
+        result = cur.fetchone()
+        if not result:
+            return jsonify({'error': 'Recording not found'}), 404
+
+        filename = result[0]  # e.g., recordings/channel_1/audio_20250526_104037.wav
+        timestamp = result[1]  # e.g., 20250526_104037
+        channel_id = result[2]  # Channel ID for looking up channel name
         full_path = _resolve_recording_path(filename)
 
         if full_path is None or not full_path.is_file():
             return jsonify({'error': 'Audio file not found'}), 404
 
-        channel_name = recording.get('channel_name') or 'Audio'
+        # Get channel name from database
+        channel_name = 'Audio'  # Fallback
+        try:
+            channel = _settings_manager.get_channel(channel_id)
+            if channel:
+                channel_name = channel.get('name', 'Audio')
+        except Exception as e:
+            error_logger.error(f"Error fetching channel name: {str(e)}")
+            channel_name = 'Audio'
+
+        # Get time format preference from query parameter (default to 24h)
+        time_format = request.args.get('time_format', '24h')
+        
+        # Format the stored UTC timestamp in the download filename.
+        safe_channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        utc_filename = f'{safe_channel_name}.wav'
+        if timestamp:
+            try:
+                utc_dt = datetime.strptime(timestamp, '%Y%m%d_%H%M%S').replace(tzinfo=timezone.utc)
+                if time_format == '12h':
+                    hour12 = utc_dt.hour % 12 or 12
+                    ampm = 'AM' if utc_dt.hour < 12 else 'PM'
+                    utc_filename = f'{safe_channel_name}_{utc_dt.strftime("%Y-%m-%d")}-{hour12:02d}-{utc_dt.strftime("%M-%S")}-{ampm}.wav'
+                else:
+                    utc_filename = f'{safe_channel_name}_{utc_dt.strftime("%Y-%m-%d-%H-%M-%S")}.wav'
+            except (ValueError, TypeError) as e:
+                error_logger.warning(f"Error formatting UTC timestamp {timestamp}: {e}")
 
         # Return both the file (as attachment) and the OS full path in JSON
         # If you want to send the file, use send_file; if you want to send JSON, just return the path.
         # Here, let's return JSON with the path and a download URL.
         download_url = f"/{filename.replace(os.sep, '/')}"
         return jsonify({
-            'message_id': recording_id,
+            'message_id': message_id,
             'filename': filename,
             'download_url': download_url,
+            'utc_filename': utc_filename,
             'channel_name': channel_name
         }), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
-@recordings_bp.route('/audio_url_file/<int:recording_id>', methods=['GET'])
-@require_permission(
-    ['recording.read'], loader=load_request_recording,
-    id_argument='recording_id', inject_as='recording'
-)
+@recordings_bp.route('/audio_url_file/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Download audio file for a recording',
     'parameters': [
         {
-            'name': 'recording_id',
+            'name': 'message_id',
             'in': 'path',
             'type': 'integer',
             'required': True,
@@ -791,20 +854,38 @@ def get_audio_url(recording_id, recording):
         '500': {'description': 'Server error'}
     }
 })
-def get_audio_url_file(recording_id, recording):
+def get_audio_url_file(message_id):
     """
-    Return the audio file for a recording.
+    Return the audio file for a given recording_id (message_id).
     Responds with the audio file as an attachment if found.
     The downloaded filename uses the recording's UTC timestamp.
     """
+    conn = None
     try:
-        filename = recording.get('filename')
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT filename, channel_id FROM recordings WHERE id = ?", (message_id,))
+        result = cur.fetchone()
+        if not result:
+            return jsonify({'error': 'Recording not found'}), 404
+
+        filename = result[0]  # e.g., recordings/MAC/YYYY/MM/DD/YYYY-MM-DD-HH-MM-SS.wav
+        channel_id = result[1] if len(result) > 1 else None
         full_path = _resolve_recording_path(filename)
 
         if full_path is None or not full_path.is_file():
             return jsonify({'error': 'Audio file not found'}), 404
 
-        channel_name = recording.get('channel_name') or 'Audio'
+        # Get channel name from database
+        channel_name = 'Audio'  # Fallback
+        if channel_id:
+            try:
+                channel = _settings_manager.get_channel(channel_id)
+                if channel:
+                    channel_name = channel.get('name', 'Audio')
+            except Exception as e:
+                error_logger.error(f"Error fetching channel name: {str(e)}")
+                channel_name = 'Audio'
         
         # Sanitize channel name to be filename-safe
         safe_channel_name = "".join(c for c in channel_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -840,7 +921,7 @@ def get_audio_url_file(recording_id, recording):
         response = send_file(full_path, as_attachment=True, download_name=download_filename)
 
         # Add extra info in headers for client use
-        response.headers['X-Message-Id'] = str(recording_id)
+        response.headers['X-Message-Id'] = str(message_id)
         response.headers['X-Filename'] = filename
         response.headers['X-Download-Filename'] = download_filename
         response.headers['X-Download-Url'] = f"/api/recordings/{filename.replace(os.sep, '/')}"
@@ -849,19 +930,19 @@ def get_audio_url_file(recording_id, recording):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
-@recordings_bp.route('/recording_duration_calculate/<int:recording_id>', methods=['GET'])
-@require_permission(
-    ['recording.read'], loader=load_request_recording,
-    id_argument='recording_id', inject_as='recording'
-)
+@recordings_bp.route('/recording_duration_calculate/<int:message_id>', methods=['GET'])
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Calculate recording duration',
     'parameters': [
         {
-            'name': 'recording_id',
+            'name': 'message_id',
             'in': 'path',
             'type': 'integer',
             'required': True,
@@ -875,12 +956,21 @@ def get_audio_url_file(recording_id, recording):
         '500': {'description': 'Server error'}
     }
 })
-def get_recording_duration(recording_id, recording):
+def get_channel_duration_by_message_id(message_id):
     conn = None
     try:
-        stored_duration = recording.get('duration')
-        filename = recording.get('filename')
-        filesize = recording.get('filesize')
+        # Step 1: Get basic recording info from DB
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        
+        # Get duration and filename from database
+        cur.execute("SELECT duration, filename, filesize FROM recordings WHERE id = ?", (message_id,))
+        result = cur.fetchone()
+
+        if not result:
+            return jsonify({'error': 'Recording not found'}), 404
+
+        stored_duration, filename, filesize = result[0], result[1], result[2]
 
         duration_seconds = None
         duration_milliseconds = None
@@ -897,8 +987,7 @@ def get_recording_duration(recording_id, recording):
 
                 # Store duration in database for future use
                 try:
-                    conn = sqlite3.connect(DB_PATH)
-                    conn.execute("UPDATE recordings SET duration = ? WHERE id = ?", (duration_seconds, recording_id))
+                    cur.execute("UPDATE recordings SET duration = ? WHERE id = ?", (duration_seconds, message_id))
                     conn.commit()
                 except Exception as e:
                     error_logger.error(f"Failed to store duration in database: {e}")
@@ -919,11 +1008,9 @@ def get_recording_duration(recording_id, recording):
                     # Store duration and filesize in database for future use
                     file_size = os.path.getsize(full_path)
                     try:
-                        if conn is None:
-                            conn = sqlite3.connect(DB_PATH)
-                        conn.execute(
+                        cur.execute(
                             "UPDATE recordings SET duration = ?, filesize = ? WHERE id = ?",
-                            (duration_seconds, file_size, recording_id),
+                            (duration_seconds, file_size, message_id),
                         )
                         conn.commit()
                     except Exception as e:
@@ -953,6 +1040,8 @@ def get_recording_duration(recording_id, recording):
         except Exception as e:
             # Don't fail the endpoint if time parsing fails – just log and return duration only
             error_logger.warning(f"Failed to derive recording start/end time from filename {filename}: {e}")
+
+        conn.close()
 
         response_data = {
             'duration_seconds': round(duration_seconds, 3) if duration_seconds is not None else None,
@@ -1051,7 +1140,7 @@ def truncate_recordings():
 
 
 @recordings_bp.route('/recordings/calendar/days', methods=['GET'])
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get days with recordings for a month',
@@ -1077,28 +1166,52 @@ def truncate_recordings():
         '500': {'description': 'Server error'}
     }
 })
-def get_calendar_days(recordings):
+def get_calendar_days():
     """Get days that have recordings for a given month."""
-    year = request.args.get('year', type=int)
-    month = request.args.get('month', type=int)
-
-    if not year or not month or month < 1 or month > 12:
-        return jsonify({'error': 'Invalid year or month'}), 400
-
-    days = set()
-    for recording in recordings:
-        timestamp = recording.get('timestamp')
-        if timestamp and len(timestamp) >= 8:
+    try:
+        year = request.args.get('year', type=int)
+        month = request.args.get('month', type=int)
+        
+        if not year or not month or month < 1 or month > 12:
+            return jsonify({'error': 'Invalid year or month'}), 400
+        
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
             try:
-                days.add(int(timestamp[6:8]))
-            except (ValueError, IndexError):
-                pass
-
-    return jsonify({'days': sorted(days)}), 200
+                cursor = conn.cursor()
+                # Query recordings for the month
+                # Timestamp format: YYYYMMDD_HHMMSS
+                month_str = f"{year}{month:02d}"
+                cursor.execute('''
+                    SELECT DISTINCT timestamp
+                    FROM recordings
+                    WHERE timestamp LIKE ?
+                ''', (f"{month_str}%",))
+                
+                days = set()
+                for row in cursor.fetchall():
+                    timestamp = row[0]
+                    if timestamp and len(timestamp) >= 8:
+                        try:
+                            # Extract day from YYYYMMDD_HHMMSS format
+                            day = int(timestamp[6:8])
+                            days.add(day)
+                        except (ValueError, IndexError):
+                            continue
+                
+                return jsonify({'days': sorted(list(days))}), 200
+            except sqlite3.Error as e:
+                error_logger.error(f"Database error in get_calendar_days: {str(e)}")
+                return jsonify({'error': f'Database error: {str(e)}'}), 500
+            finally:
+                conn.close()
+    except Exception as e:
+        error_logger.error(f"Error in get_calendar_days: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 
 @recordings_bp.route('/recordings/calendar/hours', methods=['GET'])
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get hours with recordings for a day',
@@ -1131,29 +1244,53 @@ def get_calendar_days(recordings):
         '500': {'description': 'Server error'}
     }
 })
-def get_calendar_hours(recordings):
+def get_calendar_hours():
     """Get hours that have recordings for a given day."""
-    year = request.args.get('year', type=int)
-    month = request.args.get('month', type=int)
-    day = request.args.get('day', type=int)
-
-    if not year or not month or not day or month < 1 or month > 12 or day < 1 or day > 31:
-        return jsonify({'error': 'Invalid year, month, or day'}), 400
-
-    hours = set()
-    for recording in recordings:
-        timestamp = recording.get('timestamp')
-        if timestamp and len(timestamp) >= 11:
+    try:
+        year = request.args.get('year', type=int)
+        month = request.args.get('month', type=int)
+        day = request.args.get('day', type=int)
+        
+        if not year or not month or not day or month < 1 or month > 12 or day < 1 or day > 31:
+            return jsonify({'error': 'Invalid year, month, or day'}), 400
+        
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
             try:
-                hours.add(int(timestamp[9:11]))
-            except (ValueError, IndexError):
-                pass
-
-    return jsonify({'hours': sorted(hours)}), 200
+                cursor = conn.cursor()
+                # Query recordings for the day
+                # Timestamp format: YYYYMMDD_HHMMSS
+                day_str = f"{year}{month:02d}{day:02d}"
+                cursor.execute('''
+                    SELECT DISTINCT timestamp
+                    FROM recordings
+                    WHERE timestamp LIKE ?
+                ''', (f"{day_str}_%",))
+                
+                hours = set()
+                for row in cursor.fetchall():
+                    timestamp = row[0]
+                    if timestamp and len(timestamp) >= 11:
+                        try:
+                            # Extract hour from YYYYMMDD_HHMMSS format (after the underscore)
+                            hour = int(timestamp[9:11])
+                            hours.add(hour)
+                        except (ValueError, IndexError):
+                            continue
+                
+                return jsonify({'hours': sorted(list(hours))}), 200
+            except sqlite3.Error as e:
+                error_logger.error(f"Database error in get_calendar_hours: {str(e)}")
+                return jsonify({'error': f'Database error: {str(e)}'}), 500
+            finally:
+                conn.close()
+    except Exception as e:
+        error_logger.error(f"Error in get_calendar_hours: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 
 @recordings_bp.route('/recordings/calendar/recordings', methods=['GET'])
-@require_permission(['recording.read'], loader=load_owned_recordings, inject_as='recordings')
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get recordings for a specific hour',
@@ -1193,26 +1330,71 @@ def get_calendar_hours(recordings):
         '500': {'description': 'Server error'}
     }
 })
-def get_calendar_recordings(recordings):
+def get_calendar_recordings():
     """Get recordings for a specific hour."""
-    year = request.args.get('year', type=int)
-    month = request.args.get('month', type=int)
-    day = request.args.get('day', type=int)
-    hour = request.args.get('hour', type=int)
-
-    if year is None or month is None or day is None or hour is None:
-        return jsonify({'error': 'Missing required parameters'}), 400
-    if month < 1 or month > 12 or day < 1 or day > 31 or hour < 0 or hour > 23:
-        return jsonify({'error': 'Invalid parameters'}), 400
-
-    result = []
-    for recording in recordings:
-        item = dict(recording)
-        item['channel_name'] = item.get('channel_name') or f"Channel {item.get('channel_id')}"
-        item['transcription'] = item.get('transcription') or ''
-        item['is_duplicate'] = bool(item.get('is_duplicate'))
-        filename = item.get('filename')
-        item['url'] = f"/api/recordings/{filename.replace(os.sep, '/')}" if filename else None
-        result.append(item)
-
-    return jsonify({'recordings': result}), 200
+    try:
+        year = request.args.get('year', type=int)
+        month = request.args.get('month', type=int)
+        day = request.args.get('day', type=int)
+        hour = request.args.get('hour', type=int)
+        
+        if year is None or month is None or day is None or hour is None:
+            return jsonify({'error': 'Missing required parameters'}), 400
+        if month < 1 or month > 12 or day < 1 or day > 31 or hour < 0 or hour > 23:
+            return jsonify({'error': 'Invalid parameters'}), 400
+        
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                cursor = conn.cursor()
+                # Query recordings for the hour
+                # Timestamp format: YYYYMMDD_HHMMSS
+                hour_str = f"{hour:02d}"
+                day_str = f"{year}{month:02d}{day:02d}"
+                cursor.execute('''
+                    SELECT id, channel_id, filename, timestamp, transcription, status, is_duplicate, duration, filesize
+                    FROM recordings
+                    WHERE timestamp LIKE ?
+                    ORDER BY timestamp ASC
+                ''', (f"{day_str}_{hour_str}%",))
+                
+                recordings = []
+                for row in cursor.fetchall():
+                    # Get channel name
+                    channel_id = row[1]
+                    channel_name = f"Channel {channel_id}"
+                    try:
+                        channel_details = get_channel_details(channel_id)
+                        if channel_details:
+                            channel_name = channel_details.get('name', channel_name)
+                    except:
+                        pass
+                    
+                    # Build audio URL
+                    recording_id = row[0]
+                    filename = row[2]
+                    audio_url = f"/api/recordings/{filename.replace(os.sep, '/')}"
+                    
+                    recordings.append({
+                        'id': recording_id,
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'filename': filename,
+                        'timestamp': row[3],
+                        'transcription': row[4] or '',
+                        'status': row[5],
+                        'is_duplicate': bool(row[6]),
+                        'duration': row[7] if len(row) > 7 else None,
+                        'filesize': row[8] if len(row) > 8 else None,
+                        'url': audio_url
+                    })
+                
+                return jsonify({'recordings': recordings}), 200
+            except sqlite3.Error as e:
+                error_logger.error(f"Database error in get_calendar_recordings: {str(e)}")
+                return jsonify({'error': f'Database error: {str(e)}'}), 500
+            finally:
+                conn.close()
+    except Exception as e:
+        error_logger.error(f"Error in get_calendar_recordings: {str(e)}")
+        return jsonify({'error': str(e)}), 500

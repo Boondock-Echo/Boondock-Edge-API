@@ -2,22 +2,58 @@
 Channel management routes.
 Handles all channel CRUD operations and channel-related queries.
 """
+import json
+import os
 import re
+import sqlite3
 import logging
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
-from ..middleware.auth_middleware import require_permission
+from ..middleware.auth_middleware import require_admin, require_permission
 
+from app.services.audio_handler import get_audio_handler
 from ..utils.logging_setup import error_logger, event_logger
+from ..routes.route_utils import DB_PATH
 from ..services.settings_manager import get_settings_manager
-from ..services.channel_state import load_owned_channels, load_request_channel, load_owned_recordings
 
 _settings_manager = get_settings_manager()
 
 channels_bp = Blueprint('channels', __name__)
 
+
+def get_available_audio_ports():
+    """Get list of available audio stream ports (6001-6010) not used by any channel."""
+    all_ports = set(range(6001, 6011))  # Ports 6001-6010
+    
+    channels_data = _settings_manager.get_all_channels()
+    
+    # Remove ports that are already assigned to channels
+    for channel in channels_data:
+        if channel.get('audio_stream_enabled') and channel.get('audio_stream_port'):
+            port = int(channel.get('audio_stream_port', 0))
+            all_ports.discard(port)
+    
+    return sorted(list(all_ports))
+
+
+@channels_bp.route('/available-ports')
+@require_admin
+@swag_from({
+    'tags': ['Channels'],
+    'summary': 'Get available audio stream ports',
+    'responses': {
+        '200': {'description': 'List of available ports (6001-6010)'}
+    }
+})
+def get_ports():
+    """Fetch and return all available audio stream ports."""
+    available_ports = get_available_audio_ports()
+    return jsonify({'available_ports': available_ports})
+
+
+
 @channels_bp.route('/channels')
-@require_permission(['channel.read'], loader=load_owned_channels, inject_as='channels_data')
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get all channels',
@@ -25,26 +61,24 @@ channels_bp = Blueprint('channels', __name__)
         '200': {'description': 'List of all active (non-deleted) channels'}
     }
 })
-def get_channels(channels_data):
+def get_channels():
     """Fetch and return all active channels (excludes soft-deleted) with default values for missing fields."""
-
+    channels_data = _settings_manager.get_all_channels()
+    
     # Filter out soft-deleted channels
     active_channels = [ch for ch in channels_data if not ch.get('deleted')]
-
+    
     # Add default values for model, language, and auto_transcribe if not present
     for channel in active_channels:
         channel.setdefault('model', 'medium.en')  # Default model
         channel.setdefault('src_language', 'english')  # Default language
         channel.setdefault('auto_transcribe', True)  # Default to enabled for auto-transcription
-
+    
     return jsonify(active_channels)
 
 
 @channels_bp.route('/channel/<int:channel_id>/recordings')
-@require_permission(
-    ['recording.read'], loader=load_owned_recordings,
-    id_argument='channel_id', inject_as='recordings'
-)
+@require_permission(['recording.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get recordings for a specific channel',
@@ -61,15 +95,13 @@ def get_channels(channels_data):
         '200': {'description': 'List of channel recordings'}
     }
 })
-def get_channel_recordings(channel_id, recordings):
-    return jsonify(recordings)
+def get_channel_recordings(channel_id):
+    audio_handler = get_audio_handler()
+    return jsonify(audio_handler.get_channel_recordings(channel_id) if audio_handler else [])
 
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['GET'])
-@require_permission(
-    ['channel.read'], loader=load_request_channel,
-    id_argument='channel_id', inject_as='channel'
-)
+@require_permission(['channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get a specific channel',
@@ -87,15 +119,17 @@ def get_channel_recordings(channel_id, recordings):
         '404': {'description': 'Channel not found'}
     }
 })
-def get_channel(channel_id, channel):
+def get_channel(channel_id):
     """Get details for a specific channel."""
-    return jsonify(channel)
+    channel = _settings_manager.get_channel(channel_id)
+    if channel and not channel.get('deleted'):
+        return jsonify(channel)
+    
+    return jsonify({'error': 'Channel not found'}), 404
+
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['PUT'])
-@require_permission(
-    ['channel.update'], loader=load_request_channel,
-    id_argument='channel_id', inject_as='channel'
-)
+@require_permission(['channel.update'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Update channel configuration',
@@ -140,12 +174,19 @@ def get_channel(channel_id, channel):
         '500': {'description': 'Server error'}
     }
 })
-def update_channel(channel_id, channel):
+def update_channel(channel_id):
     """Update a channel's data."""
     data = request.get_json()
 
     if not data:
         return jsonify({'error': 'Request body is missing or invalid'}), 400
+
+    # Load existing channel data
+    channel = _settings_manager.get_channel(channel_id)
+    if not channel:
+        return jsonify({'error': 'Channel not found'}), 404
+    
+    channels_data = _settings_manager.get_all_channels()
 
     # Validate required fields if they're provided
     if 'name' in data and not data['name']:
@@ -196,7 +237,6 @@ def update_channel(channel_id, channel):
             return jsonify({'error': 'audio_stream_port must be a valid integer'}), 400
         
         # Check if port is already in use by another channel
-        channels_data = _settings_manager.get_all_channels()
         for ch in channels_data:
             if ch['id'] != channel_id and ch.get('audio_stream_enabled') and ch.get('audio_stream_port') == port_int:
                 return jsonify({'error': f'Port {port_int} is already in use by another channel'}), 400
@@ -224,10 +264,7 @@ def update_channel(channel_id, channel):
 
 
 @channels_bp.route('/channel/<int:channel_id>', methods=['DELETE'])
-@require_permission(
-    ['channel.delete'], loader=load_request_channel,
-    id_argument='channel_id', inject_as='channel'
-)
+@require_permission(['channel.delete'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Delete a channel (soft delete)',
@@ -247,9 +284,13 @@ def update_channel(channel_id, channel):
         '500': {'description': 'Server error'}
     }
 })
-def delete_channel(channel_id, channel):
+def delete_channel(channel_id):
     """Soft delete a channel configuration (marks as deleted, preserves ID and audio file links)."""
     try:
+        channel = _settings_manager.get_channel(channel_id)
+        if channel is None:
+            return jsonify({'error': 'Channel not found'}), 404
+
         # Soft delete: mark as deleted instead of removing
         channel['deleted'] = True
         channel['status'] = 'deleted'
@@ -406,18 +447,74 @@ def create_channel():
 
     return jsonify({'message': 'Channel created successfully', 'channel_id': new_id}), 201
 
-@channels_bp.route('/v1/channels/<mac>', methods=['GET'])
-@require_permission(
-    ['device', 'channel.read'], loader=load_request_channel,
-    id_argument='mac', inject_as='channel'
-)
+
+@channels_bp.route('/channel_by_message/<int:message_id>', methods=['GET'])
+@require_permission(['channel.read'])
+@swag_from({
+    'tags': ['Channels'],
+    'summary': 'Get channel info by recording ID',
+    'parameters': [
+        {
+            'name': 'message_id',
+            'in': 'path',
+            'type': 'integer',
+            'required': True,
+            'description': 'Recording ID'
+        }
+    ],
+    'responses': {
+        '200': {'description': 'Channel information'},
+        '404': {'description': 'Recording or channel not found'},
+        '500': {'description': 'Server error'}
+    }
+})
+def get_channel_by_message_id(message_id):
+    """
+    Fetch the channel info for a given message_id (recording_id).
+    Looks up the filename in the DB, extracts the channel folder (e.g., channel_1),
+    and returns the channel info from channels.json.
+    """
+    try:
+        # 1. Get recording info from DB
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT channel_id FROM recordings WHERE id = ?", (message_id,))
+        result = cur.fetchone()
+        if not result:
+            conn.close()
+            return jsonify({'error': 'Recording not found'}), 404
+
+        # recordings table now stores channel_id directly, so use that instead of
+        # trying to infer it from the filename/path (which used to contain channel_X)
+        channel_id = result[0]
+        if channel_id is None:
+            conn.close()
+            return jsonify({'error': 'Channel ID not found for recording'}), 404
+
+        # 2. Get channel from database/settings
+        channel = _settings_manager.get_channel(channel_id)
+        conn.close()
+        if channel:
+            # Add defaults if missing
+            channel.setdefault('model', 'medium.en')
+            channel.setdefault('src_language', 'english')
+            channel.setdefault('auto_transcribe', True)
+            return jsonify(channel), 200
+
+        return jsonify({'error': 'Channel not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@channels_bp.route('/v1/channels/<mac_address>', methods=['GET'])
+@require_permission(['device', 'channel.read'])
 @swag_from({
     'tags': ['Channels'],
     'summary': 'Get channel data by MAC address',
     'description': 'Retrieves channel configuration data from channels.json for the specified MAC address',
     'parameters': [
         {
-            'name': 'mac',
+            'name': 'mac_address',
             'in': 'path',
             'type': 'string',
             'required': True,
@@ -468,12 +565,26 @@ def create_channel():
         }
     }
 })
-def get_channel_by_mac(mac, channel):
+def get_channel_by_mac(mac_address):
     """Get channel data by MAC address from database."""
     try:
         # Normalize MAC address to uppercase for comparison
-        mac_address = mac.upper().strip()
-
+        mac_address = mac_address.upper().strip()
+        
+        # Get channel by MAC address using SettingsManager
+        channel = _settings_manager.get_channel_by_mac(mac_address)
+        
+        if not channel:
+            return jsonify({
+                'error': f'Channel not found for MAC address: {mac_address}'
+            }), 404
+        
+        # Verify MAC address matches (double-check)
+        if channel.get('mac', '').upper().strip() != mac_address:
+            return jsonify({
+                'error': 'MAC address verification failed'
+            }), 500
+        
         # Return channel data as JSON
         logging.info(f"Channel data retrieved for MAC: {mac_address}")
         return jsonify(channel), 200
