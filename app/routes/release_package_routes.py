@@ -3,7 +3,7 @@ Full-stack release upload and rollback (admin only).
 """
 import logging
 from flask import Blueprint, jsonify, request
-from ..middleware.auth_middleware import require_auth
+from ..middleware.auth_middleware import require_admin
 from ..services import release_package_service
 
 log = logging.getLogger(__name__)
@@ -12,14 +12,14 @@ release_package_bp = Blueprint("release_package", __name__)
 
 
 @release_package_bp.route("/version/status", methods=["GET"])
-@require_auth
+@require_admin
 def version_status():
     """Current release metadata and list of on-disk backup snapshots."""
     return jsonify(release_package_service.get_status())
 
 
 @release_package_bp.route("/version/apply", methods=["POST"])
-@require_auth
+@require_admin
 def version_apply():
     """
     Multipart: field "file" = release .zip
@@ -50,7 +50,7 @@ def version_apply():
 
 
 @release_package_bp.route("/version/rollback", methods=["POST"])
-@require_auth
+@require_admin
 def version_rollback():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):

@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from config import DATA_ROOT
+from config import Config, DATA_ROOT
 
 LOGGER = logging.getLogger("boondock.setup")
 
 DEVICE_SETTINGS = {
-    "boondock_edge": "global_enable_edge_devices",
-    "uniden_scanner": "global_enable_uniden_scanners",
+    "boondock_edge": "edge_recorders_enabled",
+    "uniden_scanner": "uniden_scanners_enabled",
 }
 INBOX_VIEWS = {"continuous", "pagination"}
 MESSAGE_SORTING = {"newest", "oldest"}
@@ -102,7 +102,7 @@ def auto_configure_connected_edge_devices(settings_manager: Any) -> dict[str, An
     )
 
     settings = settings_manager.get_all_settings() or {}
-    host_ssid = settings.get("host_ssid")
+    host_ssid = settings.get("ssid")
     host_password = settings.get("host_password")
     host_ip = settings.get("host_ip")
     host_port = settings.get("host_port", "4000")
@@ -141,49 +141,54 @@ def initialize(setup: dict[str, Any]) -> None:
     from app.services.db_initializer import initialize_settings_database
     from app.services.recordings_db_initializer import initialize_db
     from app.services.settings_manager import get_settings_manager
-    from app.utils.auth import load_tokens
     from app.utils.password_utils import hash_password
 
     initialize_settings_database()
     settings_manager = get_settings_manager()
     admin = setup["admin"]
+    preferences = setup["preferences"]
     existing_admin = settings_manager.get_user(admin["email"]) or {}
     existing_admin.update({
         "name": existing_admin.get("name", "Administrator"),
         "password": hash_password(admin["password"]),
         "role": "admin",
-        "profile": "Admin",
-        "status": "Active",
-        "accessLevel": "Level 1",
         "mfa_enabled": existing_admin.get("mfa_enabled", False),
+        "mfa_enforced": existing_admin.get("mfa_enforced", False),
+        "mfa_secret": existing_admin.get("mfa_secret"),
         "created_at": existing_admin.get("created_at") or datetime.now(timezone.utc).isoformat(),
-        "login_history": existing_admin.get("login_history", []),
+        "groups": existing_admin.get("groups", []),
+        "preferences": {
+            "display": {"time_format": "24h"},
+            "inbox": {
+                "records_per_page": 0 if preferences["inbox_view"] == "continuous" else 20,
+                "sort_direction": (
+                    "oldest_first" if preferences["message_sorting"] == "oldest"
+                    else "newest_first"
+                ),
+                "show_full_timestamps": False,
+                "show_time": True,
+                "show_car": False,
+                "show_channel": True,
+                "show_person": False,
+                "show_duplicate_recordings": False,
+                "show_hallucinations": True,
+            },
+            "reports": {"density": "comfortable"},
+        },
     })
     if not settings_manager.save_user(admin["email"], existing_admin):
         raise RuntimeError("Unable to save the administrator account")
 
     selected = set(setup["selected_devices"])
-    preferences = setup["preferences"]
     settings = {
         **{setting: device in selected for device, setting in DEVICE_SETTINGS.items()},
-        "global_inbox_view_mode": preferences["inbox_view"],
-        "host_ssid": setup['wifi']['ssid'],
+        "ssid": setup['wifi']['ssid'],
         "host_password": setup['wifi']['password'],
         "host_ip": setup['wifi']['ip_address'],
     }
     if not settings_manager.set_all_settings(settings):
         raise RuntimeError("Unable to save installation settings")
-    if not settings_manager.save_pagination_prefs(admin["email"], {
-        "recordsPerPage": 20,
-        "currentPage": 1,
-        "reverseSort": preferences["message_sorting"] == "oldest",
-        "showFullTimestamps": False,
-    }):
-        raise RuntimeError("Unable to save administrator preferences")
-
     initialize_db()
-    load_tokens()
-
     if "boondock_edge" in selected:
         auto_configure_connected_edge_devices(settings_manager)
 
@@ -191,14 +196,15 @@ def initialize(setup: dict[str, Any]) -> None:
     LOGGER.info("API setup completed successfully in %s", DATA_ROOT)
 
 def upgrade() -> None:
-    # """Apply upgrade-safe initialization without changing installer settings."""
-    # from app.services.db_initializer import initialize_settings_database
-    # from app.services.recordings_db_initializer import initialize_db
-    # from app.utils.auth import load_tokens
+    """Apply versioned migrations without running installation setup."""
+    from migrations.authorization import upgrade_authorization_schema
+    from migrations.dashboard_cutover import upgrade_dashboard_schema
 
-    # initialize_settings_database()
-    # initialize_db()
-    # load_tokens()
+    upgrade_authorization_schema(Config.get_settings_db_path())
+    upgrade_dashboard_schema(
+        Config.get_settings_db_path(),
+        Config.get_recordings_db_path(),
+    )
 
     LOGGER.info("API upgrade completed successfully in %s", DATA_ROOT)
 
@@ -248,4 +254,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

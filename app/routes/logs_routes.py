@@ -6,12 +6,14 @@ import os
 import logging
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin
 from datetime import datetime
 from ..services.db_logging_manager import get_db_logging_manager
 
 logs_bp = Blueprint('logs', __name__)
 
 @logs_bp.route('/logs', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Get all logs',
@@ -68,6 +70,7 @@ def get_all_logs():
         return jsonify({'error': str(e)}), 500
 
 @logs_bp.route('/logs/<log_type>', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Get logs by type',
@@ -159,6 +162,7 @@ def get_logs_by_type(log_type):
         return jsonify({'error': str(e)}), 500
     
 @logs_bp.route('/logs/<log_type>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Clear logs by type',
@@ -215,6 +219,7 @@ def clear_logs(log_type):
 
 
 @logs_bp.route('/logs_clear', methods=['POST'])
+@require_admin
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Clear all logs',
@@ -271,6 +276,7 @@ def clear_all_logs():
 
 
 @logs_bp.route('/logs/statistics', methods=['GET'])
+@require_admin
 @swag_from({
     'tags': ['Logs'],
     'summary': 'Get log statistics',

@@ -8,9 +8,11 @@ import logging
 from config import DATA_ROOT
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_permission
 
 from ..utils.logging_setup import error_logger
 from ..services.transcription_service import request_openai_transcription
+from ..services.recording_state import update_transcription as persist_transcription
 from ..routes.route_utils import (
     DB_PATH,
     create_history_entry,
@@ -20,6 +22,7 @@ transcription_bp = Blueprint('transcription', __name__)
 
 
 @transcription_bp.route('/transcribe_save/<int:message_id>', methods=['POST'])
+@require_permission(['transcription.update'])
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Update transcription and optionally replace audio',
@@ -124,10 +127,7 @@ def update_transcription(message_id):
             print(f"Warning: Failed to create history entry: {e}")
 
         # Update transcription in DB (always)
-        cur.execute(
-            "UPDATE recordings SET transcription = ? WHERE id = ?",
-            (transcription, message_id)
-        )
+        persist_transcription(conn, message_id, transcription)
         conn.commit()
 
         return jsonify({
@@ -145,6 +145,7 @@ def update_transcription(message_id):
 
 
 @transcription_bp.route('/transcribe_save/<int:message_id>', methods=['GET'])
+@require_permission(['transcription.read'])
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Get transcription for a recording',
@@ -184,6 +185,7 @@ def get_transcription(message_id):
 
 
 @transcription_bp.route('/transcribe', methods=['POST'])
+@require_permission(['transcription.create'])
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Transcribe audio file (proxy to external API)',
@@ -256,6 +258,7 @@ def transcribe_proxy():
 
 
 @transcription_bp.route('/transcribe/<int:record_id>', methods=['POST'], endpoint='transcribe_proxy_audio')
+@require_permission(['transcription.create'])
 @swag_from({
     'tags': ['Transcription'],
     'summary': 'Transcribe a recording by ID',
@@ -324,11 +327,7 @@ def transcribe_proxy_by_id(record_id):
 
             # Save transcription to DB
             with sqlite3.connect(DB_PATH) as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "UPDATE recordings SET transcription = ? WHERE id = ?",
-                    (api_response['transcription'], record_id)
-                )
+                persist_transcription(conn, record_id, api_response['transcription'])
                 conn.commit()
 
             resp = jsonify(formatted_response)

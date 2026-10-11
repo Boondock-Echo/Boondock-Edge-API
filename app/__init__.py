@@ -79,12 +79,11 @@ def create_app(config_class=Config):
     # Import and register blueprints inside create_app to avoid circular imports
 
     from app.routes.auth_routes import auth_bp, mfa_bp
-    from app.routes.branding_routes import branding_bp
     from app.routes.channels_routes import channels_bp
     from app.routes.recordings_routes import recordings_bp
     from app.routes.transcription_routes import transcription_bp
     from app.routes.users_routes import users_bp
-    from app.routes.profiles_routes import profiles_bp
+    from app.routes.groups_routes import groups_bp
     from app.routes.s3_routes import s3_bp
     from app.routes.hotspot_routes import hotspot_bp
     from app.routes.settings_routes import settings_bp
@@ -97,7 +96,6 @@ def create_app(config_class=Config):
     from app.routes.tags_routes import tags_bp
     from app.routes.frequencies_routes import frequencies_bp
     from app.routes.incident_reports_routes import incident_reports_bp
-    from app.routes.pagination_routes import pagination_bp
     from app.routes.maintenance_routes import maintenance_bp
     from app.routes.health_routes import health_bp, notification_bp
     from app.routes.docs_routes import docs_bp
@@ -108,7 +106,6 @@ def create_app(config_class=Config):
     from app.routes.external_api_routes import external_api_bp
 
     # Register all blueprints with /api prefix
-    app.register_blueprint(branding_bp, url_prefix='/api/branding')
     # TO-DO non-standard channel_bp routes
     app.register_blueprint(channels_bp, url_prefix='/api')
     # TO-DO non-standard recordings_bp routes
@@ -118,7 +115,7 @@ def create_app(config_class=Config):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(mfa_bp, url_prefix='/api/mfa')
     app.register_blueprint(users_bp, url_prefix='/api')
-    app.register_blueprint(profiles_bp, url_prefix='/api')
+    app.register_blueprint(groups_bp, url_prefix='/api')
     app.register_blueprint(s3_bp, url_prefix='/api')
     app.register_blueprint(hotspot_bp, url_prefix='/api')
     app.register_blueprint(settings_bp, url_prefix='/api')
@@ -129,7 +126,6 @@ def create_app(config_class=Config):
     app.register_blueprint(tags_bp, url_prefix='/api')
     app.register_blueprint(frequencies_bp, url_prefix='/api')
     app.register_blueprint(incident_reports_bp, url_prefix='/api')
-    app.register_blueprint(pagination_bp, url_prefix='/api')
     app.register_blueprint(maintenance_bp, url_prefix='/api')
     app.register_blueprint(health_bp, url_prefix='/api/health')
     app.register_blueprint(notification_bp, url_prefix='/api/notifications')
@@ -158,7 +154,7 @@ def create_app(config_class=Config):
             audio_handler = get_audio_handler()
             from app.services.settings_manager import get_settings_manager
             queue_enabled = get_settings_manager().get_setting(
-                'global_transcription_queue_enabled', True
+                'transcription_queue_enabled', True
             )
             if queue_enabled and audio_handler and not getattr(audio_handler, "running", False):
                 audio_handler.start()

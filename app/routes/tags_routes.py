@@ -4,6 +4,7 @@ Tags routes for managing tags and recording tags.
 import sqlite3
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
+from ..middleware.auth_middleware import require_admin, require_permission
 from datetime import datetime
 from .route_utils import load_tags, save_tags, DB_PATH
 from ..services.settings_manager import get_settings_manager
@@ -11,6 +12,7 @@ from ..services.settings_manager import get_settings_manager
 tags_bp = Blueprint('tags', __name__)
 
 @tags_bp.route('/tags', methods=['GET'])
+@require_permission(['tag.read'])
 @swag_from({
     'tags': ['Tags'],
     'summary': 'List tags',
@@ -50,6 +52,7 @@ def list_tags():
     return jsonify(tags), 200
 
 @tags_bp.route('/tags', methods=['POST'])
+@require_permission(['tag.write'])
 @swag_from({
     'tags': ['Tags'],
     'summary': 'Create a tag',
@@ -107,6 +110,7 @@ def create_tag():
     return jsonify(tag), 201
 
 @tags_bp.route('/tags/<int:tag_id>', methods=['PUT', 'PATCH'])
+@require_permission(['tag.write'])
 @swag_from({
     'tags': ['Tags'],
     'summary': 'Update a tag',
@@ -161,6 +165,7 @@ def update_tag(tag_id):
     return jsonify({'error': 'Tag not found'}), 404
 
 @tags_bp.route('/tags/<int:tag_id>', methods=['DELETE'])
+@require_admin
 @swag_from({
     'tags': ['Tags'],
     'summary': 'Delete a tag',
@@ -189,6 +194,7 @@ def delete_tag(tag_id):
 
 
 @tags_bp.route('/recordings_tag/<int:recording_id>/tags', methods=['GET'])
+@require_permission(['tag.read'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get tags for a recording',
@@ -220,6 +226,7 @@ def get_recording_tags(recording_id):
     return jsonify(tags), 200
 
 @tags_bp.route('/recordings_tag/batch/tags', methods=['POST'])
+@require_permission(['tag.write'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Get tags for multiple recordings',
@@ -281,6 +288,7 @@ def get_batch_recording_tags():
     return jsonify(tags_by_recording), 200
 
 @tags_bp.route('/recordings_tag/<int:recording_id>/tags', methods=['POST'])
+@require_permission(['tag.write'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Add a tag to a recording',
@@ -337,6 +345,7 @@ def add_recording_tag(recording_id):
     return jsonify({'recording_id': recording_id, 'tag': tag}), 201
 
 @tags_bp.route('/recordings_tag/<int:recording_id>/tags/<string:tag>', methods=['DELETE'])
+@require_permission(['tag.write'])
 @swag_from({
     'tags': ['Recordings'],
     'summary': 'Remove a tag from a recording',
@@ -371,11 +380,10 @@ def delete_recording_tag(recording_id, tag):
     deleted = cur.rowcount > 0
     conn.commit()
     conn.close()
-    
+
     # Decrement usage_count for the tag if it was actually deleted
     if deleted:
         settings_manager = get_settings_manager()
         settings_manager.decrement_tag_usage(tag)
-    
-    return jsonify({'recording_id': recording_id, 'tag': tag}), 200
 
+    return jsonify({'recording_id': recording_id, 'tag': tag}), 200

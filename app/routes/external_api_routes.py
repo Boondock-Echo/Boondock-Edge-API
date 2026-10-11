@@ -23,8 +23,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
 
-from ..middleware.auth_middleware import require_admin
-from ..middleware.api_key_auth import require_api_key
+from ..middleware.auth_middleware import require_admin, require_permission
 from ..services.api_key_manager import get_api_key_manager
 from ..utils.api_responses import problem, build_pagination
 from ..routes.route_utils import DB_PATH
@@ -40,84 +39,77 @@ MAX_PER_PAGE = 200
 # ``enforced`` means the backend currently checks this scope on an endpoint.
 SCOPE_CATALOG = [
     {
-        'id': 'transcriptions:read',
+        'id': 'transcriptions.read',
         'label': 'Read transcriptions',
         'description': 'List and search transcription text via GET /api/v1/transcriptions.',
         'group': 'Transcriptions',
         'enforced': True,
     },
     {
-        'id': 'transcriptions:write',
+        'id': 'transcriptions.write',
         'label': 'Write transcriptions',
         'description': 'Create or update transcription text for recordings.',
         'group': 'Transcriptions',
         'enforced': False,
     },
     {
-        'id': 'recordings:read',
+        'id': 'recordings.read',
         'label': 'Read recordings',
         'description': 'List recording metadata, inbox, and status.',
         'group': 'Recordings',
         'enforced': False,
     },
     {
-        'id': 'recordings:write',
+        'id': 'recordings.create',
         'label': 'Upload recordings',
         'description': 'Upload audio files and queue them for processing.',
         'group': 'Recordings',
         'enforced': False,
     },
     {
-        'id': 'audio:read',
-        'label': 'Download audio',
-        'description': 'Download recording audio files by id or path.',
-        'group': 'Audio',
-        'enforced': False,
-    },
-    {
-        'id': 'channels:read',
+        'id': 'channels.read',
         'label': 'Read channels',
         'description': 'List channels, stations, and channel details.',
         'group': 'Channels',
         'enforced': False,
     },
     {
-        'id': 'channels:write',
+        'id': 'channels.write',
         'label': 'Manage channels',
         'description': 'Create or update channels and related settings.',
         'group': 'Channels',
         'enforced': False,
     },
     {
-        'id': 'devices:read',
+        'id': 'devices.read',
         'label': 'Read devices',
         'description': 'List Edge recorders and device status.',
         'group': 'Devices',
         'enforced': False,
     },
     {
-        'id': 'devices:write',
+        'id': 'devices.write',
         'label': 'Manage devices',
         'description': 'Register or update device configuration.',
         'group': 'Devices',
         'enforced': False,
     },
     {
-        'id': 'queue:read',
+        'id': 'queue.read',
         'label': 'Read queue',
         'description': 'View transcription queue status and logs.',
         'group': 'Queue',
         'enforced': False,
     },
     {
-        'id': 'queue:write',
+        'id': 'queue.write',
         'label': 'Manage queue',
         'description': 'Start, stop, requeue, or purge transcription jobs.',
         'group': 'Queue',
         'enforced': False,
     },
     {
-        'id': 'settings:read',
+        'id': 'settings.read',
         'label': 'Read settings',
         'description': 'Read non-sensitive global configuration values.',
         'group': 'Settings',
@@ -126,7 +118,7 @@ SCOPE_CATALOG = [
 ]
 
 ALLOWED_SCOPES = [s['id'] for s in SCOPE_CATALOG]
-DEFAULT_SCOPES = ['transcriptions:read']
+DEFAULT_SCOPES = ['transcriptions.read']
 
 # When a caller does not specify an expiry, keys default to this many days.
 # Lifetime (non-expiring) keys are still allowed, but must be requested
@@ -228,7 +220,7 @@ def list_scopes():
                 'scopes': {
                     'type': 'array',
                     'items': {'type': 'string', 'enum': ALLOWED_SCOPES},
-                    'example': ['transcriptions:read']
+                    'example': ['transcriptions.read']
                 },
                 'expires_at': {
                     'type': 'string',
@@ -344,12 +336,12 @@ def revoke_api_key(key_id):
 # =====================================================================
 
 @external_api_bp.route('/v1/transcriptions', methods=['GET'])
-@require_api_key('transcriptions:read')
+@require_permission(['transcriptions.read'])
 @swag_from({
     'tags': ['External API'],
     'summary': 'List transcriptions (paginated)',
     'description': 'Returns a paginated list of transcriptions, newest first. '
-                   'Requires an API key with scope `transcriptions:read` '
+                   'Requires an API key with scope `transcriptions.read` '
                    '(Authorization: Bearer bk_live_… or X-API-Key).',
     'security': [{'ApiKeyAuth': []}],
     'produces': ['application/json', 'application/problem+json'],

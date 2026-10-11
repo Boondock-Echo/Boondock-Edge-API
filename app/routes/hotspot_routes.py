@@ -5,6 +5,7 @@ Handles Wi-Fi hotspot start, stop, and status operations.
 import json
 import logging
 from flask import Blueprint, jsonify, request
+from ..middleware.auth_middleware import require_admin
 
 from app.services.hotspot_service import (
     get_hotspot_status,
@@ -20,6 +21,7 @@ hotspot_bp = Blueprint('hotspot', __name__)
 
 
 @hotspot_bp.route('/hotspot/status', methods=['GET'])
+@require_admin
 def hotspot_status():
     """
     Return the current hotspot status and basic configuration summary.
@@ -38,7 +40,7 @@ def hotspot_status():
         settings = _settings_manager.get_all_settings()
         # Attach host mapping info used by recorder autoconfiguration
         status["host_settings"] = {
-            "host_ssid": settings.get("host_ssid", ""),
+            "ssid": settings.get("ssid", ""),
             "host_ip": settings.get("host_ip", ""),
             "host_port": settings.get("host_port", "4000"),
         }
@@ -49,6 +51,7 @@ def hotspot_status():
 
 
 @hotspot_bp.route('/hotspot/start', methods=['POST'])
+@require_admin
 def hotspot_start():
     """
     Create/update and start the hotspot on the edge device (Pi or mini PC).
@@ -61,7 +64,7 @@ def hotspot_start():
         settings = _settings_manager.get_all_settings()
 
         payload = request.get_json(silent=True) or {}
-        ssid = (payload.get("ssid") or settings.get("host_ssid") or "").strip()
+        ssid = (payload.get("ssid") or settings.get("ssid") or "").strip()
         password = (payload.get("password") or settings.get("host_password") or "").strip()
 
         if not ssid or not password:
@@ -94,6 +97,7 @@ def hotspot_start():
 
 
 @hotspot_bp.route('/hotspot/stop', methods=['POST'])
+@require_admin
 def hotspot_stop():
     """
     Stop the hotspot connection if it is active.
