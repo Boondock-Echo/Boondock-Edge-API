@@ -67,8 +67,9 @@ def load_setup(path: Path) -> dict[str, Any]:
         raise SetupError(f"Unsupported selected_devices: {', '.join(unknown_devices)}")
 
     wifi = setup.get("wifi")
-    if wifi is not None and (
-        not isinstance(wifi, dict)
+    if (
+        wifi is None
+        or not isinstance(wifi, dict)
         or not wifi.get("ssid")
         or "password" not in wifi
     ):
