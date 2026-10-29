@@ -2,6 +2,7 @@
 
 import sqlite3
 from app.routes import transcription_routes
+from app.services import recordings_db_initializer
 
 
 def test_transcription_update_uses_resolved_recording_path(
@@ -13,16 +14,9 @@ def test_transcription_update_uses_resolved_recording_path(
     recording.write_bytes(b"original audio")
 
     database = tmp_path / "recordings.db"
+    monkeypatch.setattr(recordings_db_initializer, "DB_PATH", database)
+    recordings_db_initializer.initialize_db()
     with sqlite3.connect(database) as connection:
-        connection.execute(
-            """CREATE TABLE recordings (
-                id INTEGER PRIMARY KEY,
-                filename TEXT,
-                transcription TEXT,
-                is_hallucination BOOLEAN NOT NULL DEFAULT FALSE,
-                updated_at INTEGER NOT NULL DEFAULT 0
-            )"""
-        )
         connection.execute(
             "INSERT INTO recordings (id, filename, transcription) VALUES (?, ?, ?)",
             (1, "recordings/sample.wav", "old text"),
@@ -45,7 +39,7 @@ def test_transcription_update_uses_resolved_recording_path(
         )
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     with sqlite3.connect(database) as connection:
         row = connection.execute(
             """SELECT transcription, is_hallucination, updated_at

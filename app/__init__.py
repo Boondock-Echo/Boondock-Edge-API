@@ -116,6 +116,8 @@ def create_app(config_class=Config):
     app.register_blueprint(mfa_bp, url_prefix='/api/mfa')
     app.register_blueprint(users_bp, url_prefix='/api')
     app.register_blueprint(groups_bp, url_prefix='/api')
+    from .routes.keyword_actions_routes import keyword_actions_bp
+    app.register_blueprint(keyword_actions_bp, url_prefix='/api')
     app.register_blueprint(s3_bp, url_prefix='/api')
     app.register_blueprint(hotspot_bp, url_prefix='/api')
     app.register_blueprint(settings_bp, url_prefix='/api')

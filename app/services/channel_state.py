@@ -2,6 +2,7 @@
 In-memory channel visual state management.
 Tracks recording/idle/error/warning states for visual feedback without persisting to channels.json
 """
+import json
 import threading
 import time
 from config import Config, DATA_ROOT
@@ -11,6 +12,7 @@ from flask import request
 
 from .settings_manager import get_settings_manager, normalize_mac_address
 from .notification_service import get_active_notifications
+from .keyword_actions import popup_actions_for_recordings
 from ..utils.sqlite_utils import connect_sqlite
 from ..routes.route_utils import RECORDINGS_DIR
 
@@ -315,6 +317,12 @@ def load_inbox(principal, value=None, id_argument=None):
     """Load one authorized inbox window and its matching total."""
     try:
         joins, base_clauses, base_parameters = _recording_join_scope(principal)
+        recording_id = _inbox_argument('recording_id')
+        if recording_id is not None:
+            if recording_id <= 0:
+                raise ValueError('recording_id must be positive')
+            base_clauses.append('recordings.id = ?')
+            base_parameters.append(recording_id)
         channel_values = []
         for value in request.args.getlist('channel_ids'):
             channel_values.extend(part.strip() for part in value.split(',') if part.strip())
@@ -402,18 +410,22 @@ def load_inbox(principal, value=None, id_argument=None):
             query = f"""
                 SELECT DISTINCT recordings.id, recordings.channel_id,
                     recordings.filename, recordings.timestamp, recordings.status,
-                    recordings.transcription, recordings.duration,
+                    recordings.transcription, recordings.duration, recordings.matched_keywords,
                     recordings.is_hallucination, recordings.is_duplicate, recordings.updated_at
                 FROM recordings {' '.join(joins)}
                 WHERE {' AND '.join(clauses) if clauses else '1'}
                 ORDER BY {order} LIMIT ? OFFSET ?
             """
             rows = connection.execute(query, (*parameters, limit + 1, offset)).fetchall()
+            popup_actions = popup_actions_for_recordings(
+                connection, [row['id'] for row in rows[:limit]], principal,
+            )
 
         has_more = len(rows) > limit
         page_rows = rows[:limit]
         messages = []
         removed_ids = []
+        allowed_keywords = {keyword['id'] for keyword in principal.get('keywords', [])}
         for row in page_rows:
             if ((row['is_duplicate'] and not show_duplicates) or
                     (row['is_hallucination'] and not show_hallucinations)):
@@ -421,6 +433,15 @@ def load_inbox(principal, value=None, id_argument=None):
             else:
                 message = dict(row)
                 message.pop('is_duplicate')
+                message['keyword_actions'] = popup_actions.get(row['id'], [])
+                # Membership is resolved for each request, not from browser login state.
+                stored_matches = message['matched_keywords']
+                if isinstance(stored_matches, str):
+                    stored_matches = json.loads(stored_matches)
+                message['matched_keywords'] = [
+                    keyword for keyword in stored_matches
+                    if keyword['id'] in allowed_keywords
+                ]
                 messages.append(message)
         last = messages[-1] if messages else None
         return ({

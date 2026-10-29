@@ -327,7 +327,7 @@ def transcribe_proxy_by_id(record_id):
 
             # Save transcription to DB
             with sqlite3.connect(DB_PATH) as conn:
-                persist_transcription(conn, record_id, api_response['transcription'])
+                persist_transcription(conn, record_id, api_response['transcription'], from_transcriber=True)
                 conn.commit()
 
             resp = jsonify(formatted_response)
