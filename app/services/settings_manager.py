@@ -193,8 +193,83 @@ class SettingsManager:
             finally:
                 conn.close()
     
+    # ==================== KEYWORD ACTION METHODS ====================
+    @staticmethod
+    def _keyword_action(row):
+        if row is None:
+            return None
+        action = dict(row)
+        config = action.pop('config')
+        return {**config, **action}
+
+    def get_keyword_action(self, action_id):
+        """Look up one action by its indexed primary key."""
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                return self._keyword_action(conn.execute(
+                    'SELECT * FROM keyword_actions WHERE id=?', (action_id,),
+                ).fetchone())
+            finally:
+                conn.close()
+
+    def get_keyword_actions(self, *, kind=None):
+        """List reusable action definitions, optionally selecting one kind."""
+        clauses, parameters = [], []
+        if kind is not None:
+            clauses.append('kind=?')
+            parameters.append(kind)
+        where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                return [self._keyword_action(row) for row in conn.execute(
+                    'SELECT * FROM keyword_actions' + where + ' ORDER BY name, id', parameters,
+                )]
+            finally:
+                conn.close()
+
+    def save_keyword_action(self, action, *, create=False):
+        """Insert a new action or update exactly one existing row."""
+        columns = ('id', 'name', 'kind')
+        config = {key: value for key, value in action.items() if key not in columns}
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                if create:
+                    cursor = conn.execute(
+                        'INSERT INTO keyword_actions(id,name,kind,config) VALUES(?,?,?,?)',
+                        (*(action[key] for key in columns), config),
+                    )
+                else:
+                    cursor = conn.execute(
+                        'UPDATE keyword_actions SET name=?,kind=?,config=? WHERE id=?',
+                        (action['name'], action['kind'], config, action['id']),
+                    )
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def delete_keyword_action(self, action_id):
+        """Delete by primary key without loading or rewriting other actions."""
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute('DELETE FROM keyword_actions WHERE id=?', (action_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     # ==================== USERS METHODS ====================
-    
+
     def get_user(self, email: str, safe: bool = False) -> Optional[Dict[str, Any]]:
         """Get a user by email."""
         with _db_lock:
@@ -505,6 +580,13 @@ class SettingsManager:
                 f'SELECT * FROM keywords WHERE id IN ({placeholders})', keyword_ids
             ).fetchall()
         }
+        for keyword in details.values():
+            keyword['action_ids'] = []
+        for link in conn.execute(
+            f'SELECT keyword_id,action_id FROM keyword_action_links WHERE keyword_id IN ({placeholders}) ORDER BY action_id', keyword_ids,
+        ):
+            if link['keyword_id'] in details:
+                details[link['keyword_id']]['action_ids'].append(link['action_id'])
         group['keyword_details'] = [details[keyword_id] for keyword_id in keyword_ids if keyword_id in details]
         return group
 
@@ -537,6 +619,7 @@ class SettingsManager:
                        VALUES(?,?,?)''', combination,
                 )
                 keyword_id = cursor.lastrowid
+                SettingsManager._replace_keyword_actions(conn, keyword_id, value.get('action_ids', []))
             else:
                 raise ValueError('keywords entries must be IDs or new keyword objects')
             if keyword_id in keyword_ids or combination in combinations:
@@ -544,6 +627,70 @@ class SettingsManager:
             keyword_ids.append(keyword_id)
             combinations.add(combination)
         return keyword_ids
+
+    @staticmethod
+    def _replace_keyword_actions(conn, keyword_id, action_ids):
+        if not isinstance(action_ids, list) or any(not isinstance(item, str) or not item for item in action_ids):
+            raise ValueError('action_ids must be an array of action IDs')
+        action_ids = list(dict.fromkeys(action_ids))
+        if action_ids:
+            placeholders = ','.join('?' for _ in action_ids)
+            count = conn.execute(f'SELECT COUNT(*) FROM keyword_actions WHERE id IN ({placeholders})', action_ids).fetchone()[0]
+            if count != len(action_ids):
+                raise ValueError('One or more selected actions do not exist')
+        conn.execute('DELETE FROM keyword_action_links WHERE keyword_id=?', (keyword_id,))
+        conn.executemany('INSERT INTO keyword_action_links(keyword_id,action_id) VALUES(?,?)',
+                         [(keyword_id, action_id) for action_id in action_ids])
+
+    def set_keyword_actions(self, keyword_id, action_ids):
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                if not conn.execute('SELECT 1 FROM keywords WHERE id=?', (keyword_id,)).fetchone():
+                    raise LookupError('Keyword not found')
+                self._replace_keyword_actions(conn, keyword_id, action_ids)
+                conn.commit()
+                return {'id': keyword_id, 'action_ids': list(dict.fromkeys(action_ids))}
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def get_keyword_action_triggers(self, keyword_ids, channel_id, *, action_id=None):
+        """Find assigned actions within the channel's current group ownership."""
+        if not keyword_ids:
+            return {}
+        placeholders = ','.join('?' for _ in keyword_ids)
+        parameters = [*keyword_ids, channel_id]
+        action_clause = ''
+        if action_id is not None:
+            action_clause = ' AND a.id=?'
+            parameters.append(action_id)
+        with _db_lock:
+            conn = self._get_connection()
+            try:
+                result = {}
+                for row in conn.execute(
+                    f"""SELECT a.*, l.keyword_id, g.id AS trigger_group_id
+                        FROM keyword_action_links l
+                        JOIN keyword_actions a ON a.id=l.action_id
+                        JOIN groups g ON EXISTS (
+                            SELECT 1 FROM json_each(g.keywords) WHERE value=l.keyword_id)
+                        JOIN channel_owners co ON co.owner_type='group' AND co.owner_id=CAST(g.id AS TEXT)
+                        WHERE l.keyword_id IN ({placeholders}) AND co.channel_id=?{action_clause}""", parameters,
+                ):
+                    data = dict(row)
+                    keyword_id = data.pop('keyword_id')
+                    group_id = data.pop('trigger_group_id')
+                    entry = result.setdefault(data['id'], {
+                        'action': self._keyword_action(data), 'keyword_ids': set(), 'group_ids': set(),
+                    })
+                    entry['keyword_ids'].add(keyword_id)
+                    entry['group_ids'].add(group_id)
+                return result
+            finally:
+                conn.close()
 
     def delete_keyword(self, keyword_id: int) -> bool:
         """Delete a keyword globally and remove all group references."""

@@ -120,6 +120,10 @@ def _create_database_schema():
             pass
 
         # Authorization schema
+        from .keyword_action_schema import KEYWORD_ACTION_SETTINGS_SCHEMA
+        for statement in KEYWORD_ACTION_SETTINGS_SCHEMA:
+            cursor.execute(statement)
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

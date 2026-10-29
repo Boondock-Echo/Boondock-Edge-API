@@ -234,6 +234,96 @@ must run `python -m migrations.channel_settings_sync` from the API repository
 before starting the updated API. This standalone migration adds the column
 without requiring changes to `manage.py`.
 
+Successful transcriptions are matched against configured group keywords when
+saved. Each recording stores `matched_keywords`, including the pattern, matching
+options, occurrence count, and highlight ranges (UTF-16 offsets). Inbox responses
+include only matches available through the requesting user's groups. The dashboard
+uses these saved matches for highlighting, sidebar counts, and filtering.
+Editing or retranscribing a recording replaces its matches; adding a keyword
+does not backfill historical recordings. Actions can be configured as described below.
+Existing installations must run `python -m migrations.keyword_actions` before
+starting the updated API; `manage.py upgrade` also applies this migration.
+
+### Keyword actions and email
+
+In **Settings → Keyword tracking → Actions**, administrators create reusable
+popup or email actions. There are no action group, enabled, or trigger-keyword
+controls. On the **Keywords** screen, check actions when adding a keyword, or
+use **Edit actions** to change an existing keyword's selections. An action is
+active for a keyword precisely while it is selected there. The same action can
+be reused by multiple keywords and groups.
+
+Actions are queued when the automatic transcription pipeline receives a result. Access
+comes from the keyword's groups: their channel ownership must include the
+recording's channel. Duplicate recordings and hallucinations do not trigger
+actions. Manual edits, version restores, and user-requested retranscription only
+update the transcript and its matches; they never queue actions. The incoming
+transcription handler saves the result and queues matching actions in the same
+transaction. There is no first-result flag or additional tracking in the database.
+Creating or assigning an action does not scan existing recordings. Different
+actions are independent.
+
+Popup actions appear while an authorized group member has the inbox open, even
+with live mode off. Existing historical events are not replayed on initial page
+load. Audio playback is optional and depends on browser autoplay permissions.
+
+Configure **Email delivery** with SMTP routing only: host and port,
+STARTTLS/TLS or a local relay, optional username/password, and the dashboard
+base URL used for links. Email is absent from the action-type dropdown until
+routing is configured. Each email action owns its From address/name, Reply-To,
+To/Cc/Bcc recipients, subject, and plain-text or HTML message template. Sender
+and recipient fields are never stored in SMTP routing settings.
+
+Recording alert emails include the original WAV file as an attachment, alongside
+any recording link in the template. Recipients can play the attachment without
+logging into the dashboard. Missing or unreadable audio causes delivery to retry
+and eventually show as failed; alerts are not silently sent without their audio.
+SMTP test messages have no recording attachment.
+
+Blank passwords preserve the saved password; the separate clear option removes
+it. Passwords are never returned by the email settings API. The test-email button
+on an email action sends a real test message from that action's sender to the
+supplied test recipient. Template preview uses sample values and sends no email.
+
+Templates support `{keyword}`, `{keywords}`, `{matched_text}`, `{transcript}`,
+`{recording_id}`, `{channel}`, `{timestamp}`, `{recording_url}`, and
+`{dashboard_url}`. Times use UTC; HTML substitutions are escaped. Literal braces
+must be doubled. Recording links open the dashboard's authenticated recording
+page and preserve their destination through login. Recipients still need access.
+
+Action events are committed in the same transaction as the recording. Email is
+sent by a background outbox worker started by `run.py`, so SMTP failures do not
+block transcription. Pending messages survive restarts. Delivery failures retry
+up to three attempts, with 30- and 60-second delays; partial recipient acceptance
+is marked failed without resending to accepted recipients. SMTP acceptance is
+reported as sent, not a guarantee of inbox delivery. A crash after SMTP acceptance
+but before committing the sent state can cause a retry; retries reuse Message-ID.
+Removing SMTP routing pauses queued delivery. Removing the matching keyword
+assignments or deleting an action cancels its pending deliveries when processed. The Actions page shows recent
+delivery states and error categories without SMTP replies or credentials.
+
+Before starting the updated API on an existing installation, run
+`python -m migrations.keyword_actions`, or the normal `python manage.py upgrade`.
+Fresh installs define the outbox directly; the standalone migration only adds
+the new outbox and does not alter historical transcripts or matches.
+
+Action definitions live in the `keyword_actions` table in settings.db, keyed by
+stable action ID. The `keyword_action_links` table stores keyword selections.
+The single `migrations/keyword_actions.py` upgrade handles matched keywords,
+action definitions, keyword selections, SMTP routing conversion, and the delivery
+outbox. It upgrades legacy settings lists and group-scoped action tables directly
+to the current schema. Previously upgraded databases can run it again safely.
+Action IDs, selections, historical matches, and queued deliveries are preserved.
+Fresh installs define the current schema in their database initializers.
+
+Admin endpoints are `/api/settings/email` (GET/PATCH),
+`/api/settings/email/test` (POST), `/api/keyword-actions` (GET/POST),
+`/api/keyword-actions/<id>` (PATCH/DELETE), `/api/keyword-actions/preview` (POST),
+`/api/keyword-actions/deliveries` (GET, latest 50), and
+`/api/keywords/<id>/actions` (PUT with `action_ids`). Settings use the existing
+settings repository; delivery events live in the recordings database. Additional
+action types can be added without changing the keyword matching contract.
+
 USB writes and Wi-Fi responses share the same outbound mapping and numeric
 types. USB merges those fields into its last full device export; Wi-Fi returns
 only the supported fields. Speaker and audio-stream settings are currently

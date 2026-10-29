@@ -498,6 +498,10 @@ def purge_queue_logs():
     'description': 'Initial, older-window, and update-poll reads use one endpoint.',
     'parameters': [
         {
+            'name': 'recording_id', 'in': 'query', 'type': 'integer',
+            'required': False, 'description': 'Restrict to one authorized recording for email links'
+        },
+        {
             'name': 'channel_ids', 'in': 'query', 'type': 'string',
             'required': False, 'description': 'Comma-separated active channel IDs'
         },

@@ -89,3 +89,17 @@ def delete_keyword(keyword_id):
     if not _settings_manager.delete_keyword(keyword_id):
         return jsonify({'error': 'Keyword not found'}), 404
     return '', 204
+
+
+@groups_bp.route('/keywords/<int:keyword_id>/actions', methods=['PUT'])
+@require_admin
+def set_keyword_actions(keyword_id):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'action_ids'}:
+        return jsonify({'error': 'Provide action_ids only'}), 400
+    try:
+        return jsonify(_settings_manager.set_keyword_actions(keyword_id, data['action_ids']))
+    except LookupError as error:
+        return jsonify({'error': str(error)}), 404
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400

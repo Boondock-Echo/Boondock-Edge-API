@@ -20,6 +20,7 @@ def initialize_db():
             filename TEXT,
             timestamp INTEGER,
             transcription TEXT,
+            matched_keywords JSON NOT NULL DEFAULT '[]',
             status TEXT DEFAULT 'new',
             backed_up BOOLEAN DEFAULT FALSE,
             is_duplicate BOOLEAN DEFAULT FALSE,
@@ -31,6 +32,9 @@ def initialize_db():
                 (CAST(strftime('%s', 'now') AS INTEGER) * 1000)
         )
     ''')
+    from .keyword_action_schema import KEYWORD_ACTION_SCHEMA
+    for statement in KEYWORD_ACTION_SCHEMA:
+        cursor.execute(statement)
     
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_recordings_timestamp 

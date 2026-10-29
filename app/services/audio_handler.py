@@ -12,7 +12,8 @@ from .transcription_service import (
     TranscriptionAuthenticationError,
     TranscriptionService,
 )
-from .recording_state import is_hallucination, update_transcription
+from .recording_state import update_transcription
+from .keyword_actions import enqueue_actions
 from .settings_manager import get_settings_manager
 
 _settings_manager = get_settings_manager()
@@ -106,73 +107,42 @@ class AudioChannel:
         db_logger.info(f"AudioChannel {channel_id} initialized successfully")
 
     def save_recording(self, filename, timestamp, transcription):
-        """Store one successfully returned transcription and its classification."""
+        """Save an incoming transcription and queue its actions in one transaction."""
         with self.recording_lock:
             conn = sqlite3.connect(_get_db_path(), isolation_level='IMMEDIATE')
-            cursor = None
             try:
                 if not filename or not timestamp or not isinstance(transcription, str):
                     raise ValueError("Missing required fields for recording")
-                    
-                cursor = conn.cursor()
-                
-                cursor.execute('''
-                    SELECT id FROM recordings 
-                    WHERE channel_id = ? AND filename = ?
-                ''', (self.channel_id, filename))
-                
-                existing = cursor.fetchone()
+
+                existing = conn.execute(
+                    'SELECT id FROM recordings WHERE channel_id=? AND filename=?',
+                    (self.channel_id, filename),
+                ).fetchone()
                 if existing:
-                    update_transcription(conn, existing[0], transcription)
+                    recording_id = existing[0]
                 else:
-                    # Insert new record - calculate filesize and duration
                     file_path = (DATA_ROOT / filename).resolve()
-                    file_size = 0
-                    duration = 0.0
-                    
-                    if file_path.exists():
-                        file_size = file_path.stat().st_size
-                        # Calculate duration: (file_size - 44) / 2 / 8000
-                        WAV_HEADER_SIZE = 44
-                        BYTES_PER_SAMPLE = 2
-                        SAMPLE_RATE = 8000
-                        if file_size > WAV_HEADER_SIZE:
-                            data_size = file_size - WAV_HEADER_SIZE
-                            num_samples = data_size / BYTES_PER_SAMPLE
-                            duration = round(num_samples / SAMPLE_RATE, 1)
-                    
-                    cursor.execute('''
-                        INSERT INTO recordings (
-                            channel_id, filename, timestamp, transcription, filesize,
-                            duration, is_hallucination, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        self.channel_id, filename, timestamp, transcription,
-                        file_size, duration, is_hallucination(transcription),
-                        time.time_ns() // 1_000_000,
-                    ))
-                
+                    file_size = file_path.stat().st_size if file_path.exists() else 0
+                    # PCM WAV: 44-byte header, 16-bit samples, 8 kHz.
+                    duration = round((file_size - 44) / 2 / 8000, 1) if file_size > 44 else 0.0
+                    recording_id = conn.execute(
+                        '''INSERT INTO recordings(channel_id,filename,timestamp,filesize,duration)
+                           VALUES(?,?,?,?,?)''',
+                        (self.channel_id, filename, timestamp, file_size, duration),
+                    ).lastrowid
+
+                if not update_transcription(conn, recording_id, transcription):
+                    raise RuntimeError("Recording no longer exists")
+                enqueue_actions(conn, recording_id)
                 conn.commit()
-                db_logger.info(f"Recording saved successfully: Channel {self.channel_id}, File: {filename}")
+                db_logger.info("Recording saved successfully: Channel %s, File: %s", self.channel_id, filename)
                 return True
-                
-            except sqlite3.Error as e:
-                error_logger.error(f"Database error while saving recording: {str(e)}")
-                if conn:
-                    conn.rollback()
+            except Exception as error:
+                conn.rollback()
+                error_logger.error("Error saving recording %s: %s", filename, error)
                 return False
-                
-            except Exception as e:
-                error_logger.error(f"Unexpected error while saving recording: {str(e)}")
-                if conn:
-                    conn.rollback()
-                return False
-                
             finally:
-                if cursor:
-                    cursor.close()
-                if conn:
-                    conn.close()
+                conn.close()
 
     def get_recordings(self):
         """Retrieve recordings with validation against filesystem."""

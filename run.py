@@ -196,6 +196,8 @@ def main():
         socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode=async_mode)
 
         logger.info("Flask application created successfully")
+        from app.services.keyword_actions import start_worker
+        start_worker()
     except Exception as e:
         logger.error(f"Failed to create Flask application: {e}")
         sys.exit(1)
@@ -288,6 +290,8 @@ def main():
     finally:
         # Cleanup
         logger.info("Shutting down...")
+        from app.services.keyword_actions import stop_worker
+        stop_worker()
 
         try:
             from app.services.cloud_device_events import shutdown_cloud_event_writer
