@@ -15,6 +15,17 @@ def _body():
     return data
 
 
+@keyword_actions_bp.route('/settings/kasa', methods=['GET', 'PATCH'])
+@require_admin
+def kasa_settings():
+    try:
+        if request.method == 'GET':
+            return jsonify(service.kasa_actions.get_settings())
+        return jsonify(service.kasa_actions.save_settings(_body()))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+
+
 @keyword_actions_bp.route('/settings/email', methods=['GET', 'PATCH'])
 @require_admin
 def email_settings():

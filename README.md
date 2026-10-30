@@ -333,26 +333,44 @@ dashboard to expose the new configuration.
 
 On the Actions screen, choose **Kasa device** and click **Discover Kasa devices**.
 Choose a discovered device by name, model, and IP address, or enter its IPv4
-address manually and click **Read outlets**. Select the named outlet and **Turn on** or **Turn off**.
+address manually and click **Read outlets**. For devices requiring authentication,
+first save the TP-Link/Kasa account email and password in **Kasa account**.
+Select the named outlet and **Turn on** or **Turn off**.
 **Test action** immediately executes that command and reads back the outlet state.
 Reading outlets and saving an action do not switch any sockets. Save the action,
 then select it on a keyword to activate automatic execution. Outlet IDs remain
 stable when their display names change. Reserve the strip's IP in your router.
 
 The API host must reach the devices on their local network. Discovery uses UDP
-broadcast on ports 9999 and 20002; local device control uses TCP port 9999.
+broadcast on ports 9999 and 20002; legacy control uses TCP port 9999 and
+newer devices use their supported local authentication protocols and ports
+(typically TCP 80 or 443).
 Discovery normally stays within the API host's subnet and may not cross VLANs,
 VPNs, or container bridges. A manual IP can work when broadcast discovery cannot,
 provided targeted UDP discovery and TCP control can reach the device.
 
 This integration uses `python-kasa` and supports on/off control for compatible
-legacy Kasa plugs, power strips (including HS300), bulbs, light strips, and wall
-switches/dimmers. A single device appears as one selectable target; power strips
-expose their individual outlets. No Alexa Routine or cloud account is needed for
-these devices. Discovered devices using other protocols or requiring account
-authentication are listed as unavailable with a reason. Unreadable devices do not
+legacy and authenticated smart Kasa plugs, power strips (including HS300), bulbs,
+light strips, and wall switches/dimmers supported by the installed library.
+A single device appears as one selectable target; power strips
+expose their individual outlets. Older devices can work without credentials.
+Newer devices authenticate locally using the saved TP-Link/Kasa account email
+and password. No Alexa Routine is required. Authentication failures and devices
+without supported on/off controls are listed as unavailable with a reason.
+Unreadable devices do not
 hide successfully discovered devices. Unknown models that python-kasa cannot
 discover are not listed. USB charging ports are not switchable outlets.
+
+Kasa credentials are configured through admin-only `GET/PATCH /api/settings/kasa`.
+PATCH accepts `username`, `password`, and `clear_password`. Blank or omitted
+passwords preserve the saved password; clearing explicitly removes it. Changing
+accounts requires entering a new password. Settings responses expose only the
+username and configured indicators. Credentials are stored in the API settings
+database, consistently with SMTP settings; they are never returned by the API,
+embedded in actions, or copied into delivery events. Discovery, manual reads,
+test commands, and queued deliveries use the currently saved account credentials.
+Saving credentials does not validate them or switch a device; discover or read
+a device to verify authentication.
 
 Kasa actions use the existing transactional outbox independently of SMTP setup,
 with the same delivery history, three-attempt retry limit, and cancellation when
