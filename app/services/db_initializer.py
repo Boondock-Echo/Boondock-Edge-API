@@ -333,19 +333,19 @@ def initialize_settings_database():
     """
     Initialize settings.db with default values.
     This should be called at application startup.
-    Idempotent - safe to call multiple times.
+    Return the new default group ID, or None when already initialized.
     """
     global _initialization_checked
 
     # Quick check without lock for performance
     if _initialization_checked:
-        return True
+        return None
 
     # Thread-safe check and initialization
     with _initialization_lock:
         # Double-check pattern
         if _initialization_checked:
-            return True
+            return None
 
         _create_database_schema()
         settings_manager = SettingsManager()
@@ -358,7 +358,7 @@ def initialize_settings_database():
                 _ensure_default_settings_rows(settings_manager, existing_settings)
                 _initialization_checked = True
                 logger.debug("Database already initialized with data. Skipping defaults.")
-                return True
+                return None
         except Exception as e:
             logger.warning(f"Error checking database initialization status: {e}")
             # Continue with initialization if check fails
@@ -374,7 +374,7 @@ def initialize_settings_database():
         "description": "Default user group",
         "is_default": True,
         "permissions": [
-            "reports.read",
+            "incident_report.read",
             "recording.read",
             "channel.read",
             "tag.read",
@@ -408,7 +408,9 @@ def initialize_settings_database():
 
         # Initialize the default authorization group.
         logger.info("Setting default authorization group...")
-        settings_manager.save_group(DEFAULT_GROUP)
+        default_group_id = settings_manager.save_group(DEFAULT_GROUP)
+        if default_group_id < 0:
+            raise RuntimeError("Unable to create the default authorization group")
 
         # Initialize default firmware metadata (JSON file)
         logger.info("Setting default firmware metadata...")
@@ -457,7 +459,7 @@ def initialize_settings_database():
 
         # Mark as initialized only on success
         _initialization_checked = True
-        return True
+        return default_group_id
 
     except Exception as e:
         logger.error(f"\n✗ Database initialization FAILED: {e}")

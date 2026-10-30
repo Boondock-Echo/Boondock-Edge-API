@@ -4,7 +4,7 @@ KEYWORD_ACTION_SETTINGS_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS keyword_actions (
         id TEXT PRIMARY KEY NOT NULL,
         name TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('email', 'popup')),
+        kind TEXT NOT NULL CHECK(kind IN ('email', 'popup', 'kasa')),
         config JSON NOT NULL
     )""",
     """CREATE TABLE IF NOT EXISTS keyword_action_links (
@@ -22,7 +22,7 @@ KEYWORD_ACTION_SCHEMA = (
         recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
         action_id TEXT NOT NULL,
         group_id INTEGER NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('email', 'popup')),
+        kind TEXT NOT NULL CHECK(kind IN ('email', 'popup', 'kasa')),
         payload JSON NOT NULL,
         state TEXT NOT NULL DEFAULT 'pending'
             CHECK(state IN ('pending', 'sending', 'sent', 'failed', 'cancelled')),

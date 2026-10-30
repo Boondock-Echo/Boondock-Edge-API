@@ -22,6 +22,7 @@ import uuid
 from config import Config, DATA_ROOT
 from app.utils.sqlite_utils import connect_sqlite
 from .settings_manager import get_settings_manager
+from . import kasa_actions
 
 logger = logging.getLogger(__name__)
 _config_lock = threading.RLock()
@@ -138,7 +139,7 @@ def get_actions():
 
 
 def save_action(data, action_id=None):
-    fields = {'name', 'kind', 'autoplay', 'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format'}
+    fields = {'name', 'kind', 'autoplay', 'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format', 'device_host', 'outlet_id', 'command'}
     if not isinstance(data, dict) or set(data) - fields:
         raise ValueError('Unknown action fields')
     with _config_lock:
@@ -170,8 +171,17 @@ def save_action(data, action_id=None):
             action['body_format'] = action.get('body_format', 'text')
         elif action.get('kind') == 'popup':
             action['autoplay'] = _boolean(action.get('autoplay', True), 'autoplay')
+        elif action.get('kind') == 'kasa':
+            action.update(kasa_actions.validate_config(action))
         else:
-            raise ValueError('Action kind must be email or popup')
+            raise ValueError('Action kind must be email, popup, or kasa')
+        # Keep only configuration relevant to the selected action type.
+        config_fields = {
+            'popup': {'autoplay'},
+            'email': {'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format'},
+            'kasa': {'device_host', 'outlet_id', 'command'},
+        }[action['kind']]
+        action = {key: value for key, value in action.items() if key in config_fields | {'id', 'name', 'kind'}}
         if not manager.save_keyword_action(action, create=action_id is None):
             raise LookupError('Action not found')
     return action
@@ -295,19 +305,19 @@ def send_email(action, context, settings=None):
             raise PartialEmailDeliveryError()
 
 
-def process_email_delivery(database=None, now=None):
+def process_email_delivery(database=None, now=None, *, kind='email'):
     """Claim and attempt one due delivery. A lease permits crash recovery."""
     settings = get_email_settings()
-    if not settings['configured']:
+    if kind == 'email' and not settings['configured']:
         return False
     now = int(time.time()) if now is None else now
     connection = connect_sqlite(database or Config.get_recordings_db_path(), row_factory=True)
     try:
         connection.execute('BEGIN IMMEDIATE')
         row = connection.execute(
-            '''SELECT * FROM keyword_action_deliveries WHERE kind='email' AND
+            '''SELECT * FROM keyword_action_deliveries WHERE kind=? AND
                ((state='pending' AND next_attempt_at<=?) OR (state='sending' AND lease_until<=?))
-               ORDER BY id LIMIT 1''', (now, now),
+               ORDER BY id LIMIT 1''', (kind, now, now),
         ).fetchone()
         if not row:
             connection.rollback()
@@ -326,11 +336,14 @@ def process_email_delivery(database=None, now=None):
         ).get(row['action_id'])
         permitted = trigger and trigger['group_ids'].intersection(context.get('group_ids', [row['group_id']]))
         recording_exists = connection.execute('SELECT 1 FROM recordings WHERE id=?', (row['recording_id'],)).fetchone()
-        if not recording_exists or not action or action['kind'] != 'email' or not permitted:
+        if not recording_exists or not action or action['kind'] != kind or not permitted:
             connection.execute("UPDATE keyword_action_deliveries SET state='cancelled', lease_until=0 WHERE id=?", (row['id'],))
         else:
             try:
-                send_email({**action, **payload['action']}, payload['context'], settings)
+                if kind == 'kasa':
+                    kasa_actions.execute(payload['action'])
+                else:
+                    send_email({**action, **payload['action']}, payload['context'], settings)
             except Exception as error:
                 attempts = row['attempts'] + 1
                 # Keep server replies, credentials, and message content out of errors.
@@ -397,13 +410,15 @@ def start_worker():
         def run():
             while not _stop.is_set():
                 try:
-                    if process_email_delivery():
+                    email_processed = process_email_delivery()
+                    kasa_processed = process_email_delivery(kind='kasa')
+                    if email_processed or kasa_processed:
                         continue
                 except Exception:
                     logger.exception('Keyword action worker could not process its outbox')
                 _stop.wait(2)
 
-        _worker = threading.Thread(target=run, name='keyword-email-delivery', daemon=True)
+        _worker = threading.Thread(target=run, name='keyword-action-delivery', daemon=True)
         _worker.start()
 
 

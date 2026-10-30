@@ -235,6 +235,27 @@ class TranscriptionService:
         transcription_logger.debug(f"Local transcription completed successfully for: {filepath}")
         return result
 
+    def transcribe_with_settings(self, filepath):
+        """Transcribe manually requested audio using the current saved settings."""
+        settings = get_settings_manager().get_all_settings()
+        if settings.get("method", "local") == "openai":
+            return self.transcribe_audio(filepath, use_local=False)
+
+        language = settings.get("target_language", "english")
+        language = {
+            "english": "en", "spanish": "es", "french": "fr",
+            "german": "de", "italian": "it", "portuguese": "pt",
+            "chinese": "zh", "japanese": "ja", "korean": "ko",
+            "arabic": "ar",
+        }.get(language, language)
+        # Reuse the queue's model and idle cleanup, including after settings edits.
+        with self.model_lock:
+            model_name = settings.get("model", "small")
+            if self.model_name != model_name:
+                self._unload_whisper_model()
+                self.model_name = model_name
+            return self.transcribe_audio(filepath, use_local=True, language=language)
+
     def _transcribe_boondock_api(self, filepath):
         """
         Transcribe using Boondock cloud API.

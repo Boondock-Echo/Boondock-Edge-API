@@ -72,9 +72,6 @@ def _initialize_and_capture_settings(monkeypatch, tmp_path, document):
         def save_hallucination(self, pattern):
             return 1
 
-        def get_user(self, email):
-            return None
-
         def save_user(self, email, user):
             saved_users[email] = user
             return True
@@ -95,7 +92,7 @@ def _initialize_and_capture_settings(monkeypatch, tmp_path, document):
             return True
 
     monkeypatch.setattr(manage, "DATA_ROOT", tmp_path)
-    monkeypatch.setattr("app.services.db_initializer.initialize_settings_database", lambda: True)
+    monkeypatch.setattr("app.services.db_initializer.initialize_settings_database", lambda: 7)
     monkeypatch.setattr("app.services.recordings_db_initializer.initialize_db", lambda: None)
     monkeypatch.setattr("app.services.settings_manager.get_settings_manager", SettingsManager)
     monkeypatch.setattr("app.utils.password_utils.hash_password", lambda password: "hashed")
@@ -123,6 +120,7 @@ def test_initialize_writes_installer_wifi_settings(monkeypatch, tmp_path):
     assert saved_settings["host_ip"] == "10.42.0.1"
     assert "hotspot_initial_setup_done" not in saved_settings
     assert saved_users["Admin@Example.com"]["preferences"]["inbox"]["records_per_page"] == 0
+    assert saved_users["Admin@Example.com"]["groups"] == [7]
     assert len(autoconfigured) == 1
 
 
@@ -206,3 +204,26 @@ def test_install_normalizes_bundled_phrase_lines(
     phrase_file.write_text('Thank you\n thank you \n\nTHANK YOU\nBye\n', encoding='utf-8')
     monkeypatch.setattr(manage, 'CODE_ROOT', tmp_path)
     assert manage.import_hallucination_defaults(initialized_settings_manager) == 2
+
+
+def test_install_creates_admin_in_new_default_group_and_skips_existing_database(
+    monkeypatch, initialized_settings_manager
+):
+    manager = initialized_settings_manager
+    monkeypatch.setattr('app.services.db_initializer._initialization_checked', False)
+    monkeypatch.setattr('app.services.recordings_db_initializer.initialize_db', lambda: None)
+    monkeypatch.setattr('app.utils.password_utils.hash_password', lambda password: 'hashed')
+    monkeypatch.setattr(manage, 'import_hallucination_defaults', lambda manager: 0)
+    document = _setup_document()
+    document['selected_devices'] = []
+    manage.initialize(document)
+    user = manager.get_user(document['admin']['email'])
+    assert user['groups'] == [manager.get_group('Default')['id']]
+    assert user['role'] == 'admin'
+
+    user.update({'name': 'Custom administrator', 'password': 'changed-password', 'groups': []})
+    assert manager.save_user(document['admin']['email'], user)
+    manager.set_setting('ssid', 'custom-network')
+    manage.initialize(document)
+    assert manager.get_user(document['admin']['email']) == user
+    assert manager.get_setting('ssid') == 'custom-network'

@@ -12,11 +12,29 @@ from app.services.keyword_action_schema import KEYWORD_ACTION_SCHEMA, KEYWORD_AC
 from app.utils.sqlite_utils import connect_sqlite
 
 
+def _allow_kasa(db, table, schema):
+    """Rebuild the old CHECK constraint while retaining rows and references.
+
+    Foreign keys must be disabled before the transaction; the parent table is
+    never renamed, so references from keyword_action_links keep their target.
+    """
+    row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if row is None or "'kasa'" in row[0]:
+        return
+    temporary = table + '_with_kasa'
+    db.execute(schema.replace('IF NOT EXISTS ' + table, temporary, 1))
+    columns = ','.join('"' + info[1] + '"' for info in db.execute(f'PRAGMA table_info({table})'))
+    db.execute(f'INSERT INTO {temporary} ({columns}) SELECT {columns} FROM {table}')
+    db.execute(f'DROP TABLE {table}')
+    db.execute(f'ALTER TABLE {temporary} RENAME TO {table}')
+
+
 def _upgrade_settings(settings_path):
     if settings_path is None or not Path(settings_path).exists():
         return
     db = connect_sqlite(settings_path, row_factory=True)
     try:
+        db.execute('PRAGMA foreign_keys = OFF')
         db.execute('BEGIN IMMEDIATE')
         email_row = db.execute("SELECT value FROM settings WHERE key='keyword_email'").fetchone()
         routing = json.loads(email_row['value']) if email_row else {}
@@ -32,6 +50,7 @@ def _upgrade_settings(settings_path):
             if not isinstance(values, list):
                 raise ValueError('Legacy keyword_actions must be an array')
             legacy.extend(values)
+        _allow_kasa(db, 'keyword_actions', KEYWORD_ACTION_SETTINGS_SCHEMA[0])
         for statement in KEYWORD_ACTION_SETTINGS_SCHEMA:
             db.execute(statement)
         for action in legacy:
@@ -68,12 +87,17 @@ def _upgrade_recordings(recordings_path):
         return
     db = connect_sqlite(recordings_path)
     try:
+        db.execute('PRAGMA foreign_keys = OFF')
         db.execute('BEGIN IMMEDIATE')
         columns = {row[1] for row in db.execute('PRAGMA table_info(recordings)')}
         if not columns:
             raise RuntimeError('Cannot upgrade keyword actions: recordings table is missing')
         if 'matched_keywords' not in columns:
             db.execute("ALTER TABLE recordings ADD COLUMN matched_keywords JSON NOT NULL DEFAULT '[]'")
+        # SQLite validates external triggers during ALTER TABLE. Recreate this
+        # trigger after replacing the table it references.
+        db.execute('DROP TRIGGER IF EXISTS delete_recording_keyword_actions')
+        _allow_kasa(db, 'keyword_action_deliveries', KEYWORD_ACTION_SCHEMA[0])
         for statement in KEYWORD_ACTION_SCHEMA:
             db.execute(statement)
         db.commit()

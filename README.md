@@ -324,6 +324,52 @@ Admin endpoints are `/api/settings/email` (GET/PATCH),
 settings repository; delivery events live in the recordings database. Additional
 action types can be added without changing the keyword matching contract.
 
+### Kasa device keyword actions
+
+Install the updated requirements and run `python -m migrations.keyword_actions`
+before restarting the API. The migration expands the allowed action kinds while
+preserving action IDs, keyword selections, and queued deliveries. Rebuild the
+dashboard to expose the new configuration.
+
+On the Actions screen, choose **Kasa device** and click **Discover Kasa devices**.
+Choose a discovered device by name, model, and IP address, or enter its IPv4
+address manually and click **Read outlets**. Select the named outlet and **Turn on** or **Turn off**.
+**Test action** immediately executes that command and reads back the outlet state.
+Reading outlets and saving an action do not switch any sockets. Save the action,
+then select it on a keyword to activate automatic execution. Outlet IDs remain
+stable when their display names change. Reserve the strip's IP in your router.
+
+The API host must reach the devices on their local network. Discovery uses UDP
+broadcast on ports 9999 and 20002; local device control uses TCP port 9999.
+Discovery normally stays within the API host's subnet and may not cross VLANs,
+VPNs, or container bridges. A manual IP can work when broadcast discovery cannot,
+provided targeted UDP discovery and TCP control can reach the device.
+
+This integration uses `python-kasa` and supports on/off control for compatible
+legacy Kasa plugs, power strips (including HS300), bulbs, light strips, and wall
+switches/dimmers. A single device appears as one selectable target; power strips
+expose their individual outlets. No Alexa Routine or cloud account is needed for
+these devices. Discovered devices using other protocols or requiring account
+authentication are listed as unavailable with a reason. Unreadable devices do not
+hide successfully discovered devices. Unknown models that python-kasa cannot
+discover are not listed. USB charging ports are not switchable outlets.
+
+Kasa actions use the existing transactional outbox independently of SMTP setup,
+with the same delivery history, three-attempt retry limit, and cancellation when
+keyword assignments are removed. Explicit on/off commands are safe to repeat
+when a connection fails after a device accepts a command. A queued delivery uses
+the device, outlet, and command saved when it was triggered. For immediate
+cancellation, remove the keyword assignment or delete the action.
+
+Admin-only endpoints: `POST /api/keyword-actions/kasa/discover` accepts an empty
+JSON object and returns discovered devices and their available targets.
+`POST /api/keyword-actions/kasa/outlets` accepts
+`{"device_host":"192.168.1.50"}`; `POST /api/keyword-actions/kasa/test` also accepts
+`outlet_id` and `command` (`turn_on` or `turn_off`). Create or edit actions through
+the existing action endpoints with `kind: "kasa"` and those three fields.
+Device reads and commands have a 15-second timeout. A failed verification does
+not prove that the outlet stayed unchanged; read outlets to check its state.
+
 USB writes and Wi-Fi responses share the same outbound mapping and numeric
 types. USB merges those fields into its last full device export; Wi-Fi returns
 only the supported fields. Speaker and audio-stream settings are currently

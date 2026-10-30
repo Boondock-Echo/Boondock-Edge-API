@@ -2,16 +2,16 @@
 Transcription management routes.
 Handles transcription operations including saving, retrieving, and proxy transcription.
 """
-import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import sqlite3
-import logging
 from config import DATA_ROOT
 from flask import Blueprint, jsonify, request
 from flasgger import swag_from
 from ..middleware.auth_middleware import require_permission
 
 from ..utils.logging_setup import error_logger
-from ..services.transcription_service import request_openai_transcription
+from ..services.audio_handler import get_audio_handler
 from ..services.recording_state import update_transcription as persist_transcription
 from ..routes.route_utils import (
     DB_PATH,
@@ -188,7 +188,7 @@ def get_transcription(message_id):
 @require_permission(['transcription.create'])
 @swag_from({
     'tags': ['Transcription'],
-    'summary': 'Transcribe audio file (proxy to external API)',
+    'summary': 'Transcribe audio file using the configured transcription settings',
     'consumes': ['multipart/form-data'],
     'parameters': [
         {
@@ -207,52 +207,29 @@ def get_transcription(message_id):
     }
 })
 def transcribe_proxy():
-    # Get the audio file from the request
-    audio_file = request.files['file']
+    audio_file = request.files.get('file')
+    if audio_file is None or not audio_file.filename:
+        return jsonify({'error': 'Missing audio file'}), 400
 
     try:
-        # Forward the request to the Boondock API
-        response = request_openai_transcription(
-            audio_file.stream, audio_file.filename, timeout=30
-        )
-        
-        # Log the API response for debugging
-        print(f"Target API status: {response.status_code}")
-        print(f"Target API response: {response.text}")
+        # Local Whisper needs a path. Keep the upload private to this request and
+        # remove it after either successful transcription or a provider failure.
+        with TemporaryDirectory(prefix='boondock-transcribe-') as temp_dir:
+            suffix = Path(audio_file.filename).suffix or '.wav'
+            file_path = Path(temp_dir) / f'audio{suffix}'
+            audio_file.save(file_path)
+            transcription = get_audio_handler().transcription_service.transcribe_with_settings(file_path)
 
-        # Check for successful response
-        response.raise_for_status()
-        
-        # Parse and transform the API response
-        try:
-            api_response = response.json()
-            # Check if response is a dictionary and has 'transcription' key
-            if not isinstance(api_response, dict) or 'transcription' not in api_response:
-                raise ValueError("Invalid API response format: missing 'transcription' key")
-            # Transform the response to include 'status' key
-            formatted_response = {
-                'status': 'success',
-                'transcription': api_response['transcription']
-            }
-        except ValueError as e:
-            print(f"JSON decode error: {str(e)}")
-            error_resp = jsonify({'error': 'Invalid response format from API'})
-            error_resp.headers['Access-Control-Allow-Origin'] = '*'
-            return error_resp, 500
-
-        # Return the formatted response
-        resp = jsonify(formatted_response)
+        resp = jsonify({'status': 'success', 'transcription': transcription})
         resp.headers['Access-Control-Allow-Origin'] = '*'
-        return resp, response.status_code
-
+        return resp, 200
     except TimeoutError:
-        print("Request timed out")
-        error_resp = jsonify({'error': 'API request timed out'})
+        error_resp = jsonify({'error': 'Transcription request timed out'})
         error_resp.headers['Access-Control-Allow-Origin'] = '*'
         return error_resp, 504
     except Exception as e:
-        print(f"Request error: {str(e)}")
-        error_resp = jsonify({'error': f'API request failed: {str(e)}'})
+        error_logger.exception('Manual transcription failed')
+        error_resp = jsonify({'error': f'Transcription failed: {str(e)}'})
         error_resp.headers['Access-Control-Allow-Origin'] = '*'
         return error_resp, 500
 
@@ -304,52 +281,24 @@ def transcribe_proxy_by_id(record_id):
         if not file_path.is_file():
             return jsonify({'error': 'Audio file not found', 'file_path': str(file_path), 'status': 'error'}), 404
 
-        # Send file to API
-        with open(file_path, 'rb') as audio_file:
-            response = request_openai_transcription(audio_file, file_path.name, timeout=30)
+        transcription = get_audio_handler().transcription_service.transcribe_with_settings(file_path)
 
-        print(f"Target API status: {response.status_code}")
-        print(f"Target API response: {response.text}")
+        with sqlite3.connect(DB_PATH) as conn:
+            persist_transcription(conn, record_id, transcription)
+            conn.commit()
 
-        response.raise_for_status()
-
-        # Process API response
-        try:
-            api_response = response.json()
-            if not isinstance(api_response, dict) or 'transcription' not in api_response:
-                raise ValueError("Invalid API response format: missing 'transcription' key")
-
-            formatted_response = {
-                'status': 'success',
-                'transcription': api_response['transcription'],
-                'record_id': record_id
-            }
-
-            # Save transcription to DB
-            with sqlite3.connect(DB_PATH) as conn:
-                persist_transcription(conn, record_id, api_response['transcription'], from_transcriber=True)
-                conn.commit()
-
-            resp = jsonify(formatted_response)
-            resp.headers['Access-Control-Allow-Origin'] = '*'
-            return resp, 200
-
-        except ValueError as e:
-            print(f"JSON decode error: {str(e)}")
-            return jsonify({'error': 'Invalid response format from API', 'status': 'error'}), 500
-
+        resp = jsonify({
+            'status': 'success',
+            'transcription': transcription,
+            'record_id': record_id,
+        })
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 200
     except TimeoutError:
-        print("Request timed out")
-        return jsonify({'error': 'API request timed out', 'status': 'error'}), 504
-
-    except Exception as e:
-        print(f"Request error: {str(e)}")
-        return jsonify({'error': f'API request failed: {str(e)}', 'status': 'error'}), 500
-
-    except sqlite3.Error as e:
-        print(f"Database error: {str(e)}")
+        return jsonify({'error': 'Transcription request timed out', 'status': 'error'}), 504
+    except sqlite3.Error:
+        error_logger.exception('Database error during manual transcription')
         return jsonify({'error': 'Database error occurred', 'status': 'error'}), 500
-
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return jsonify({'error': 'An unexpected error occurred', 'status': 'error'}), 500
+        error_logger.exception('Manual transcription failed')
+        return jsonify({'error': f'Transcription failed: {str(e)}', 'status': 'error'}), 500

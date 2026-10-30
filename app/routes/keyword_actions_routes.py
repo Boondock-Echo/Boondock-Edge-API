@@ -107,3 +107,45 @@ def action(action_id):
 @require_admin
 def deliveries():
     return jsonify(service.delivery_history())
+
+
+@keyword_actions_bp.route('/keyword-actions/kasa/outlets', methods=['POST'])
+@require_admin
+def kasa_outlets():
+    try:
+        data = _body()
+        if set(data) != {'device_host'}:
+            raise ValueError('Provide the device_host only')
+        return jsonify(service.kasa_actions.read_outlets(data['device_host']))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except Exception:
+        return jsonify({'error': 'Could not read the Kasa device. Check its address and network access from the API host.'}), 502
+
+
+@keyword_actions_bp.route('/keyword-actions/kasa/test', methods=['POST'])
+@require_admin
+def test_kasa():
+    try:
+        data = _body()
+        if set(data) != {'device_host', 'outlet_id', 'command'}:
+            raise ValueError('Provide device_host, outlet_id, and command')
+        result = service.kasa_actions.execute(data)
+        return jsonify({**result, 'message': 'Kasa outlet command completed and state verified.'})
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except Exception:
+        return jsonify({'error': 'Kasa command could not be verified. Read outlets to check the current state and network access.'}), 502
+
+
+@keyword_actions_bp.route('/keyword-actions/kasa/discover', methods=['POST'])
+@require_admin
+def discover_kasa():
+    try:
+        if _body():
+            raise ValueError('Discovery does not accept configuration fields')
+        return jsonify(service.kasa_actions.discover_devices())
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except Exception:
+        return jsonify({'error': 'Kasa discovery failed. Check local network and UDP broadcast access from the API host.'}), 502
