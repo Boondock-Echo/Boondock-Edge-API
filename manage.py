@@ -173,27 +173,26 @@ def auto_configure_connected_edge_devices(settings_manager: Any) -> dict[str, An
 
 
 def initialize(setup: dict[str, Any]) -> None:
-    """Create the databases and apply all setup options idempotently."""
+    """Create installation data once; leave an existing installation unchanged."""
     from app.services.db_initializer import initialize_settings_database
     from app.services.recordings_db_initializer import initialize_db
     from app.services.settings_manager import get_settings_manager
     from app.utils.password_utils import hash_password
 
-    initialize_settings_database()
+    default_group_id = initialize_settings_database()
+    if default_group_id is None:
+        LOGGER.info("Settings database already initialized; skipping installation setup")
+        return
     settings_manager = get_settings_manager()
     import_hallucination_defaults(settings_manager)
     admin = setup["admin"]
     preferences = setup["preferences"]
-    existing_admin = settings_manager.get_user(admin["email"]) or {}
-    existing_admin.update({
-        "name": existing_admin.get("name", "Administrator"),
+    admin_user = {
+        "name": "Administrator",
         "password": hash_password(admin["password"]),
         "role": "admin",
-        "mfa_enabled": existing_admin.get("mfa_enabled", False),
-        "mfa_enforced": existing_admin.get("mfa_enforced", False),
-        "mfa_secret": existing_admin.get("mfa_secret"),
-        "created_at": existing_admin.get("created_at") or datetime.now(timezone.utc).isoformat(),
-        "groups": existing_admin.get("groups", []),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "groups": [default_group_id],
         "preferences": {
             "display": {"time_format": "24h"},
             "inbox": {
@@ -212,8 +211,8 @@ def initialize(setup: dict[str, Any]) -> None:
             },
             "reports": {"density": "comfortable"},
         },
-    })
-    if not settings_manager.save_user(admin["email"], existing_admin):
+    }
+    if not settings_manager.save_user(admin["email"], admin_user):
         raise RuntimeError("Unable to save the administrator account")
 
     selected = set(setup["selected_devices"])

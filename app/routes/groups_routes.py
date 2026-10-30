@@ -1,10 +1,25 @@
 """Administrator-only authorization group routes."""
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from ..middleware.auth_middleware import require_admin
 from ..services.settings_manager import get_settings_manager
 
 groups_bp = Blueprint('groups', __name__)
 _settings_manager = get_settings_manager()
+
+def _valid_permissions():
+    """Use the permissions enforced by the registered API routes as the catalog."""
+    return sorted({
+        permission
+        for view in current_app.view_functions.values()
+        for permission in getattr(view, 'access_policy', {}).get('permissions', [])
+    })
+
+
+@groups_bp.route('/groups/permissions', methods=['GET'])
+@require_admin
+def get_group_permissions():
+    return jsonify(_valid_permissions()), 200
+
 
 def _permissions(data):
     value = data.get('permissions')
