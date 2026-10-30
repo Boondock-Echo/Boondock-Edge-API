@@ -527,3 +527,41 @@ def test_failed_action_queueing_rolls_back_the_recording_save(scenario, tmp_path
         saved = connection.execute('SELECT transcription FROM recordings').fetchall()
     assert saved == ([('pending',)] if existing else [])
     assert rows(database) == []
+
+
+def test_kasa_delivery_works_without_email_and_keeps_selected_outlet_snapshot(scenario, monkeypatch):
+    _, database, group = scenario
+    action = attach(group, service.save_action({
+        'name': 'Desk lamp', 'kind': 'kasa', 'device_host': '192.168.1.50',
+        'outlet_id': 'strip_socket1', 'command': 'turn_on',
+    }))
+    with sqlite3.connect(database) as connection:
+        receive_transcription(connection, 1, 'fire')
+    assert rows(database)[0]['state'] == 'pending'
+    service.save_action({'outlet_id': 'strip_socket2'}, action['id'])
+    commands = []
+    monkeypatch.setattr(service.kasa_actions, 'execute', lambda config: commands.append(config))
+    assert service.process_email_delivery(database, kind='kasa')
+    assert commands[0]['outlet_id'] == 'strip_socket1'
+    assert rows(database)[0]['state'] == 'sent'
+    assert not service.process_email_delivery(database, kind='kasa')
+
+
+def test_kasa_delivery_retries_and_cancels_removed_keyword_assignment(scenario, monkeypatch):
+    manager, database, group = scenario
+    attach(group, service.save_action({
+        'name': 'Lamp', 'kind': 'kasa', 'device_host': '192.168.1.50',
+        'outlet_id': 'socket1', 'command': 'turn_off',
+    }))
+    with sqlite3.connect(database) as connection:
+        receive_transcription(connection, 1, 'fire')
+    def offline(config):
+        raise TimeoutError('private device details')
+    monkeypatch.setattr(service.kasa_actions, 'execute', offline)
+    assert service.process_email_delivery(database, now=1000, kind='kasa')
+    assert rows(database)[0]['state'] == 'pending'
+    assert rows(database)[0]['last_error'] == 'TimeoutError'
+    for keyword_id in group['keywords']:
+        manager.set_keyword_actions(keyword_id, [])
+    assert service.process_email_delivery(database, now=1100, kind='kasa')
+    assert rows(database)[0]['state'] == 'cancelled'
