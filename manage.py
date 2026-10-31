@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import Config, CODE_ROOT, DATA_ROOT
 from release_metadata import (
     atomic_write_json, manifest_lock, parse_version, read_build_info, read_json_object,
+    update_component,
 )
 
 CODE_ROOT = Path(__file__).resolve().parent
@@ -228,7 +229,6 @@ def initialize(setup: dict[str, Any]) -> None:
     if "boondock_edge" in selected:
         auto_configure_connected_edge_devices(settings_manager)
 
-
     LOGGER.info("API setup completed successfully in %s", DATA_ROOT)
 
 def upgrade() -> None:
@@ -238,7 +238,6 @@ def upgrade() -> None:
     from migrations.channel_settings_sync import upgrade_channel_settings_schema
     from migrations.keyword_actions import upgrade_keyword_actions_schema
 
-    build_info = read_build_info(CODE_ROOT)
     with manifest_lock(DATA_ROOT):
         path = DATA_ROOT / "manifest.json"
         manifest = read_json_object(path, missing_ok=True)
@@ -262,8 +261,6 @@ def upgrade() -> None:
 
         # Add future migrations here with independent version checks, in order.
 
-        manifest["api"] = build_info
-        atomic_write_json(path, manifest)
     LOGGER.info("API upgrade completed successfully in %s", DATA_ROOT)
 
 
@@ -303,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "upgrade":
             upgrade()
 
+        update_component(DATA_ROOT, "api", read_build_info(CODE_ROOT))
     except (ValueError, OSError, RuntimeError) as exc:
         LOGGER.error("%s failed: %s", args.command, exc)
         return 1

@@ -1,0 +1,15 @@
+[Unit]
+Description=Delayed restart of the Boondock Edge API
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/sleep 3
+ExecStart=/usr/bin/systemctl restart @API_UNIT@
+TimeoutStartSec=120
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX

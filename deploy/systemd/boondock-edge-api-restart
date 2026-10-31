@@ -1,0 +1,12 @@
+#!/bin/sh
+# Installed root-owned. No arguments or caller-selected commands are accepted.
+set -eu
+if [ "$#" -ne 0 ]; then
+    echo "This helper accepts no arguments." >&2
+    exit 64
+fi
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    echo "Run this helper through its installed sudo rule." >&2
+    exit 77
+fi
+exec /usr/bin/systemctl start --no-block boondock-edge-api-restart.service
