@@ -190,6 +190,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          for restart_file in deploy/systemd/install-api-restart.sh \
+              deploy/systemd/boondock-edge-api-restart \
+              deploy/systemd/boondock-edge-api-restart.service.in; do
+            if [[ ! -f "$restart_file" ]]; then
+              echo "Missing restart deployment file: $restart_file. Copy the complete deploy/systemd directory." >&2
+              exit 1
+            fi
+          done
+
           PACKAGE_DIR="$RUNNER_TEMP/edge-api-package"
           ARCHIVE="boondock-edge-api-${TAG}.tar.gz"
 
@@ -203,6 +212,7 @@ jobs:
           cp requirements.txt "$PACKAGE_DIR/api/"
           cp build-info.json release_metadata.py "$PACKAGE_DIR/api/"
           cp -a migrations "$PACKAGE_DIR/api/migrations"
+          cp -a deploy "$PACKAGE_DIR/api/deploy"
           find "$PACKAGE_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
           test -s "$PACKAGE_DIR/api/build-info.json"
 
@@ -232,7 +242,10 @@ jobs:
           import tarfile
 
           with tarfile.open(os.environ["ARCHIVE"], "r:gz") as archive:
-              for name in ("api/build-info.json", "api/manage.py", "api/release_metadata.py"):
+              for name in ("api/build-info.json", "api/manage.py", "api/release_metadata.py",
+                           "api/deploy/systemd/install-api-restart.sh",
+                           "api/deploy/systemd/boondock-edge-api-restart",
+                           "api/deploy/systemd/boondock-edge-api-restart.service.in"):
                   try:
                       member = archive.getmember(name)
                   except KeyError:
