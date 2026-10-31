@@ -204,7 +204,7 @@ jobs:
           cp build-info.json release_metadata.py "$PACKAGE_DIR/api/"
           cp -a migrations "$PACKAGE_DIR/api/migrations"
           find "$PACKAGE_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
-          rm -f "$PACKAGE_DIR/api/build-info.json"
+          test -s "$PACKAGE_DIR/api/build-info.json"
 
           tar \
             --create \
@@ -227,6 +227,19 @@ jobs:
 
           tar --list --gzip --file "$ARCHIVE"
           sha256sum --check "$CHECKSUM"
+          python - <<'PY'
+          import os
+          import tarfile
+
+          with tarfile.open(os.environ["ARCHIVE"], "r:gz") as archive:
+              for name in ("api/build-info.json", "api/manage.py", "api/release_metadata.py"):
+                  try:
+                      member = archive.getmember(name)
+                  except KeyError:
+                      raise ValueError("Release archive is missing " + name) from None
+                  if not member.isfile():
+                      raise ValueError("Expected a regular file: " + name)
+          PY
 
       - name: Configure Git
         shell: bash
