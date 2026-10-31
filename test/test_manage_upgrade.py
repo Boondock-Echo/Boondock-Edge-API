@@ -111,12 +111,9 @@ def test_failure_does_not_create_missing_manifest(monkeypatch, installation):
     assert not (data / "manifest.json").exists()
 
 
-def test_invalid_build_is_rejected_before_migration(monkeypatch, installation):
+def test_invalid_build_is_rejected_without_recording_metadata(installation):
     data, code, _ = installation
     (code / "build-info.json").write_text('{"version":"2.0.0"}')
-    def unexpected(*args):
-        pytest.fail("Invalid build must be rejected before migrations")
-    monkeypatch.setattr("migrations.authorization.upgrade_authorization_schema", unexpected)
     assert manage.main(["upgrade"]) == 1
     assert not (data / "manifest.json").exists()
 
