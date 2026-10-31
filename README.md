@@ -331,6 +331,21 @@ before restarting the API. The migration expands the allowed action kinds while
 preserving action IDs, keyword selections, and queued deliveries. Rebuild the
 dashboard to expose the new configuration.
 
+The integration requires `python-kasa` 0.12.x. Earlier 0.10.x releases choose
+the wrong KLAP handshake for some IOT-family devices advertising login version 2,
+which can reject valid credentials. See the upstream
+[KLAP v2 issue](https://github.com/python-kasa/python-kasa/issues/1648).
+After applying an update, install the requirements in the API's Python environment
+with `python -m pip install --upgrade -r requirements.txt`, restart the API, and
+discover again. Applying source changes alone does not upgrade the dependency.
+IOT devices are connected using their system information so encrypted HS300/KP200
+strips retain their individual outlets instead of appearing as single plugs.
+
+An authentication error does not establish that the password is wrong. Check
+that credentials are saved, use the owning TP-Link account email with its original
+case, and check Third-Party Compatibility in the vendor app when available.
+Firmware or library incompatibilities can also reject local authentication.
+
 On the Actions screen, choose **Kasa device** and click **Discover Kasa devices**.
 Choose a discovered device by name, model, and IP address, or enter its IPv4
 address manually and click **Read outlets**. For devices requiring authentication,
