@@ -565,3 +565,17 @@ def test_kasa_delivery_retries_and_cancels_removed_keyword_assignment(scenario, 
         manager.set_keyword_actions(keyword_id, [])
     assert service.process_email_delivery(database, now=1100, kind='kasa')
     assert rows(database)[0]['state'] == 'cancelled'
+
+
+def test_kasa_credentials_are_not_copied_into_actions_or_delivery_payloads(scenario):
+    _, database, group = scenario
+    service.kasa_actions.save_settings({'username': 'owner@example.test', 'password': 'keep-account-secret'})
+    action = attach(group, service.save_action({
+        'name': 'Lamp', 'kind': 'kasa', 'device_host': '192.168.1.50',
+        'outlet_id': 'socket1', 'command': 'turn_on',
+    }))
+    with sqlite3.connect(database) as connection:
+        receive_transcription(connection, 1, 'fire')
+    assert 'keep-account-secret' not in str(action)
+    assert 'keep-account-secret' not in rows(database)[0]['payload']
+    assert 'owner@example.test' not in rows(database)[0]['payload']
