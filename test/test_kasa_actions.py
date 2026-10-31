@@ -311,7 +311,7 @@ def test_iot_connection_uses_sysinfo_to_preserve_power_strip_class(monkeypatch):
             connection_type=DeviceConnectionParameters.from_values(
                 'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=2),
         )
-        discovered = IotPlug(config.host, config=config)
+        discovered = IotPlug(config.host, protocol=get_protocol(config))
         protocol = get_protocol(config)
         query = AsyncMock(return_value={'system': {'get_sysinfo': {
             'mic_type': 'IOT.SMARTPLUGSWITCH', 'model': 'HS300(US)',
@@ -336,3 +336,86 @@ def test_saved_credentials_authentication_message_does_not_assume_bad_password()
     assert 'case-sensitive' in message and 'Third-Party Compatibility' in message
     assert 'library' in message
     assert 'test-secret' not in message
+
+
+def test_legacy_xor_device_keeps_no_auth_path_with_account_saved(monkeypatch):
+    import asyncio
+    from kasa import Credentials, Device, DeviceConfig
+    from kasa.iot import IotPlug
+    kasa_actions.save_settings({'username': 'owner@example.test', 'password': 'account-secret'})
+    async def verify():
+        # A discovery object may carry global credentials, but XOR ignores them.
+        device = IotPlug('192.168.1.50', config=DeviceConfig(
+            host='192.168.1.50', credentials=Credentials('owner@example.test', 'account-secret')))
+        update = AsyncMock()
+        monkeypatch.setattr(device, 'update', update)
+        connect = AsyncMock(side_effect=AssertionError('Legacy discovery must not be replaced'))
+        monkeypatch.setattr(Device, 'connect', connect)
+        try:
+            assert await kasa_actions._ready_device(device) is device
+            update.assert_awaited_once()
+            connect.assert_not_awaited()
+        finally:
+            await device.disconnect()
+    asyncio.run(verify())
+
+
+@pytest.mark.parametrize('legacy_works', [True, False])
+def test_iot_auth_rejection_tries_legacy_read_without_credentials_or_http_port(monkeypatch, legacy_works):
+    import asyncio
+    from kasa import Credentials, Device, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters, DeviceEncryptionType
+    from kasa.exceptions import AuthenticationError, KasaException
+    from kasa.iot import IotPlug
+    from kasa.transports import XorTransport
+    async def verify():
+        config = DeviceConfig(
+            host='192.168.1.50', port_override=80,
+            credentials=Credentials('owner@example.test', 'account-secret'),
+            connection_type=DeviceConnectionParameters.from_values(
+                'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=2, http_port=80),
+        )
+        from kasa.device_factory import get_protocol
+        device = IotPlug(config.host, protocol=get_protocol(config))
+        original = AuthenticationError('authentication rejected')
+        legacy_device = Mock(spec=IotPlug, protocol=None, turn_on=AsyncMock(), turn_off=AsyncMock())
+        connect = AsyncMock(side_effect=[original, legacy_device if legacy_works else KasaException('closed')])
+        monkeypatch.setattr(Device, 'connect', connect)
+        if legacy_works:
+            assert await kasa_actions._ready_device(device) is legacy_device
+        else:
+            with pytest.raises(AuthenticationError) as error:
+                await kasa_actions._ready_device(device)
+            assert error.value is original
+        assert connect.await_count == 2
+        fallback = connect.call_args_list[1].kwargs['config']
+        assert fallback.host == config.host
+        assert fallback.credentials is None and fallback.credentials_hash is None
+        assert fallback.port_override is None and fallback.connection_type.http_port is None
+        assert fallback.connection_type.encryption_type is DeviceEncryptionType.Xor
+        from kasa.device_factory import get_protocol
+        legacy_protocol = get_protocol(fallback)
+        assert isinstance(legacy_protocol._transport, XorTransport)
+        assert legacy_protocol._transport._port == 9999
+        await legacy_protocol.close()
+        legacy_device.turn_on.assert_not_awaited()
+        legacy_device.turn_off.assert_not_awaited()
+    asyncio.run(verify())
+
+
+def test_working_authenticated_iot_device_does_not_try_legacy(monkeypatch):
+    import asyncio
+    from kasa import Device, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters
+    from kasa.device_factory import get_protocol
+    from kasa.iot import IotPlug
+    async def verify():
+        config = DeviceConfig(host='192.168.1.96', connection_type=DeviceConnectionParameters.from_values(
+            'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=2))
+        device = IotPlug(config.host, protocol=get_protocol(config))
+        connected = Mock(spec=IotPlug)
+        connect = AsyncMock(return_value=connected)
+        monkeypatch.setattr(Device, 'connect', connect)
+        assert await kasa_actions._ready_device(device) is connected
+        connect.assert_awaited_once_with(config=config)
+    asyncio.run(verify())

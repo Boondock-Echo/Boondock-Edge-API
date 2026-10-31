@@ -346,6 +346,17 @@ that credentials are saved, use the owning TP-Link account email with its origin
 case, and check Third-Party Compatibility in the vendor app when available.
 Firmware or library incompatibilities can also reject local authentication.
 
+Mixed networks can contain devices with and without local authentication.
+Legacy XOR devices keep their discovered connection and do not use the saved
+account credentials. When an IOT device advertises an authenticated protocol but
+rejects authentication, the API also attempts a read-only legacy connection on
+TCP port 9999 without credentials. It selects that connection only if the device
+read succeeds. Modern SMART devices do not use this fallback. Working
+authenticated connections remain preferred, and protocol selection never
+switches an outlet. If the device no longer supports legacy access, the original
+authentication error remains; the fallback cannot repair account or firmware
+problems on devices requiring authentication.
+
 On the Actions screen, choose **Kasa device** and click **Discover Kasa devices**.
 Choose a discovered device by name, model, and IP address, or enter its IPv4
 address manually and click **Read outlets**. For devices requiring authentication,

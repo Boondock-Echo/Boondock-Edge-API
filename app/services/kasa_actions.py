@@ -91,16 +91,37 @@ def _targets(device):
 
 
 async def _ready_device(device):
-    from kasa import Device
+    from kasa import Device, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters, DeviceEncryptionType
+    from kasa.exceptions import AuthenticationError, KasaException
     from kasa.protocols import IotProtocol
+    from kasa.transports import XorTransport
 
-    if isinstance(device.protocol, IotProtocol):
+    if isinstance(device.protocol, IotProtocol) and not isinstance(device.protocol._transport, XorTransport):
         # UDP discovery labels all IOT.SMARTPLUGSWITCH devices as IotPlug.
         # Connect queries sysinfo to distinguish strips, plugs, and switches,
         # including IOT devices which now authenticate over KLAP v2.
         config = device.config
         await device.disconnect()
-        return await Device.connect(config=config)
+        try:
+            return await Device.connect(config=config)
+        except AuthenticationError as auth_error:
+            # Some IOT devices advertise authenticated discovery while still
+            # accepting their legacy local protocol. Verify that protocol with
+            # a read; never issue a switching command while choosing a path.
+            legacy = DeviceConfig(
+                host=config.host, timeout=2,
+                connection_type=DeviceConnectionParameters(
+                    device_family=config.connection_type.device_family,
+                    encryption_type=DeviceEncryptionType.Xor,
+                ),
+            )
+            try:
+                return await asyncio.wait_for(Device.connect(config=legacy), timeout=3)
+            except (KasaException, TimeoutError):
+                raise auth_error from None
+    # Discovery already classifies legacy XOR devices correctly. Preserve that
+    # instance and its no-authentication path even when an account is saved.
     await device.update()
     return device
 
