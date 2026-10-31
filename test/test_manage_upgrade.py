@@ -45,7 +45,7 @@ def test_missing_version_runs_all_migrations(monkeypatch, installation, manifest
                         lambda path: called.append("authorization"))
     monkeypatch.setattr("migrations.dashboard_cutover.upgrade_dashboard_schema",
                         lambda settings, recordings: called.append("dashboard"))
-    manage.upgrade()
+    assert manage.main(["upgrade"]) == 0
     assert called == ["authorization", "dashboard"]
     with sqlite3.connect(data / 'settings.db') as database:
         assert database.execute('SELECT threshold, synced FROM channels').fetchone() == ('35', 0)
@@ -63,12 +63,12 @@ def test_installed_version_skips_pre_manifest_migrations(monkeypatch, installati
         pytest.fail("Pre-manifest migrations must not run for a versioned installation")
     monkeypatch.setattr("migrations.authorization.upgrade_authorization_schema", unexpected)
     monkeypatch.setattr("migrations.dashboard_cutover.upgrade_dashboard_schema", unexpected)
-    manage.upgrade()
+    assert manage.main(["upgrade"]) == 0
     assert json.loads((data / "manifest.json").read_text()) == {**original, "api": info}
     with sqlite3.connect(data / 'settings.db') as database:
         assert database.execute('SELECT threshold, synced FROM channels').fetchone() == ('35', 0)
         database.execute('UPDATE channels SET synced=1')
-    manage.upgrade()
+    assert manage.main(["upgrade"]) == 0
     with sqlite3.connect(data / 'settings.db') as database:
         assert database.execute('SELECT synced FROM channels').fetchone() == (1,)
 
@@ -117,8 +117,7 @@ def test_invalid_build_is_rejected_before_migration(monkeypatch, installation):
     def unexpected(*args):
         pytest.fail("Invalid build must be rejected before migrations")
     monkeypatch.setattr("migrations.authorization.upgrade_authorization_schema", unexpected)
-    with pytest.raises(ValueError):
-        manage.upgrade()
+    assert manage.main(["upgrade"]) == 1
     assert not (data / "manifest.json").exists()
 
 
@@ -134,7 +133,7 @@ def test_legacy_migrations_are_safe_to_retry_on_current_schema(monkeypatch, inst
     upgrade_authorization_schema(settings)
     upgrade_dashboard_schema(settings, data / "absent.db")
     # Simulate failure before writing the manifest: both migrations run again.
-    manage.upgrade()
+    assert manage.main(["upgrade"]) == 0
     with sqlite3.connect(settings) as database:
         tables = {row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "schema_migrations" not in tables
@@ -170,3 +169,32 @@ def test_authorization_legacy_upgrade_preserves_data_on_retry(tmp_path):
         assert database.execute("SELECT COUNT(*) FROM groups WHERE name='Dispatch'").fetchone()[0] == 1
         assert database.execute("SELECT owner_id FROM channel_owners").fetchall() == [(str(group_id),)]
         assert not database.execute("SELECT 1 FROM sqlite_master WHERE name='schema_migrations'").fetchone()
+
+
+def test_cli_upgrade_failure_does_not_record_metadata(monkeypatch, installation):
+    data, _, _ = installation
+    path = data / "manifest.json"
+    original = '{ "dashboard": {"version": "3.0.0"} }\n'
+    path.write_text(original)
+
+    def fail(*args):
+        raise RuntimeError("failed migration")
+
+    monkeypatch.setattr("migrations.authorization.upgrade_authorization_schema", fail)
+    assert manage.main(["upgrade"]) == 1
+    assert path.read_text() == original
+
+
+def test_cli_setup_records_metadata_after_success(monkeypatch, installation):
+    data, code, info = installation
+    called = []
+    monkeypatch.setattr(manage, "load_setup", lambda path: {})
+
+    def initialize(setup):
+        assert not (data / "manifest.json").exists()
+        called.append("setup")
+
+    monkeypatch.setattr(manage, "initialize", initialize)
+    assert manage.main(["setup", "--config", str(code / "setup.json")]) == 0
+    assert called == ["setup"]
+    assert json.loads((data / "manifest.json").read_text()) == {"api": info}

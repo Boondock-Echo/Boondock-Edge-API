@@ -21,8 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config import Config, CODE_ROOT, DATA_ROOT
 from release_metadata import (
-    atomic_write_json, manifest_lock, parse_version, read_build_info, read_json_object,
-    update_component,
+    manifest_lock, parse_version, read_build_info, read_json_object, update_component,
 )
 
 CODE_ROOT = Path(__file__).resolve().parent
@@ -232,7 +231,7 @@ def initialize(setup: dict[str, Any]) -> None:
     LOGGER.info("API setup completed successfully in %s", DATA_ROOT)
 
 def upgrade() -> None:
-    """Apply every migration after the installed version, then commit metadata."""
+    """Apply every migration after the installed version."""
     from migrations.authorization import upgrade_authorization_schema
     from migrations.dashboard_cutover import upgrade_dashboard_schema
     from migrations.channel_settings_sync import upgrade_channel_settings_schema
