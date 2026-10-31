@@ -36,7 +36,7 @@ def test_read_is_non_mutating_and_control_only_targets_selected_outlet(monkeypat
     async def on():
         first.is_on = True
     first.turn_on.side_effect = on
-    strip = Mock(spec=IotStrip, model='HS300(US)', alias='Desk', children=[first, second],
+    strip = Mock(spec=IotStrip, protocol=None, model='HS300(US)', alias='Desk', children=[first, second],
                  update=AsyncMock(), disconnect=AsyncMock())
     monkeypatch.setattr(Discover, 'discover_single', AsyncMock(return_value=strip))
     assert len(kasa_actions.read_outlets('192.168.1.50')['outlets']) == 2
@@ -117,13 +117,13 @@ def test_discovery_lists_devices_without_switching_and_isolates_unreadable_devic
     from kasa.smart import SmartDevice
     from kasa.exceptions import AuthenticationError
     socket = SimpleNamespace(device_id='socket1', alias='Desk lamp', is_on=False)
-    strip = Mock(spec=IotStrip, model='HS300', alias='Desk strip', children=[socket],
+    strip = Mock(spec=IotStrip, protocol=None, model='HS300', alias='Desk strip', children=[socket],
                  update=AsyncMock(), disconnect=AsyncMock())
-    plug = Mock(spec=IotPlug, model='HS110', alias='Desk plug', children=[], device_id='plug1',
+    plug = Mock(spec=IotPlug, protocol=None, model='HS110', alias='Desk plug', children=[], device_id='plug1',
                 is_on=True, update=AsyncMock(), disconnect=AsyncMock())
-    offline = Mock(spec=IotPlug, model='HS100', alias='Offline', children=[],
+    offline = Mock(spec=IotPlug, protocol=None, model='HS100', alias='Offline', children=[],
                    update=AsyncMock(side_effect=TimeoutError()), disconnect=AsyncMock())
-    modern = Mock(spec=SmartDevice, model='KP125M', alias=None, update=AsyncMock(side_effect=AuthenticationError('private password')), disconnect=AsyncMock())
+    modern = Mock(spec=SmartDevice, protocol=None, model='KP125M', alias=None, update=AsyncMock(side_effect=AuthenticationError('private password')), disconnect=AsyncMock())
     devices = {'192.168.1.50': strip, '192.168.1.51': plug,
                '192.168.1.52': offline, '192.168.1.53': modern}
     discover = AsyncMock(return_value=devices)
@@ -135,7 +135,7 @@ def test_discovery_lists_devices_without_switching_and_isolates_unreadable_devic
     assert not found['192.168.1.52']['supported']
     assert 'could not be read' in found['192.168.1.52']['reason']
     assert not found['192.168.1.53']['supported']
-    assert 'authentication' in found['192.168.1.53']['reason'].lower()
+    assert 'credentials' in found['192.168.1.53']['reason'].lower()
     for device in devices.values():
         device.disconnect.assert_awaited_once()
         device.turn_on.assert_not_called()
@@ -147,7 +147,7 @@ def test_discovery_lists_devices_without_switching_and_isolates_unreadable_devic
 def test_single_plug_can_be_selected_and_wrong_device_id_is_rejected(monkeypatch):
     from kasa import Discover
     from kasa.iot import IotPlug
-    plug = Mock(spec=IotPlug, model='HS110', alias='Lamp', children=[], device_id='plug1',
+    plug = Mock(spec=IotPlug, protocol=None, model='HS110', alias='Lamp', children=[], device_id='plug1',
                 is_on=True, update=AsyncMock(), disconnect=AsyncMock(), turn_off=AsyncMock())
     async def off():
         plug.is_on = False
@@ -216,7 +216,7 @@ def test_authenticated_smart_device_discovery_and_commands_use_saved_credentials
     from kasa import DeviceType, Discover
     from kasa.smart import SmartDevice
     kasa_actions.save_settings({'username': 'owner@example.test', 'password': 'account-secret'})
-    plug = Mock(spec=SmartDevice, device_type=DeviceType.Plug, model='KP125M', alias='Lamp',
+    plug = Mock(spec=SmartDevice, protocol=None, device_type=DeviceType.Plug, model='KP125M', alias='Lamp',
                 children=[], device_id='smart1', is_on=False, update=AsyncMock(),
                 disconnect=AsyncMock(), turn_on=AsyncMock())
     async def on():
@@ -248,15 +248,91 @@ def test_authentication_failures_are_sanitized_and_non_switch_devices_stay_unava
     from kasa import DeviceType, Discover
     from kasa.exceptions import AuthenticationError
     from kasa.smart import SmartDevice
-    plug = Mock(spec=SmartDevice, model='KP125M', alias='Lamp', update=AsyncMock(
+    plug = Mock(spec=SmartDevice, protocol=None, model='KP125M', alias='Lamp', update=AsyncMock(
         side_effect=AuthenticationError('sensitive-password')), disconnect=AsyncMock())
     monkeypatch.setattr(Discover, 'discover_single', AsyncMock(return_value=plug))
-    with pytest.raises(ValueError, match='authentication failed') as error:
+    with pytest.raises(ValueError, match='No Kasa account credentials') as error:
         kasa_actions.read_outlets('192.168.1.55')
     assert 'sensitive-password' not in str(error.value)
-    hub = Mock(spec=SmartDevice, device_type=DeviceType.Hub, model='H100', alias='Hub',
+    hub = Mock(spec=SmartDevice, protocol=None, device_type=DeviceType.Hub, model='H100', alias='Hub',
                update=AsyncMock(), disconnect=AsyncMock())
     monkeypatch.setattr(Discover, 'discover', AsyncMock(return_value={'192.168.1.56': hub}))
     result = kasa_actions.discover_devices()['devices'][0]
     assert not result['supported'] and 'on/off' in result['reason']
     hub.turn_on.assert_not_called()
+
+
+@pytest.mark.parametrize('login_version', [1, 2])
+def test_real_library_chooses_correct_iot_klap_handshake(login_version, monkeypatch):
+    """Exercise the real library handshake, mocking only the device HTTP reply."""
+    import asyncio
+    import hashlib
+    from kasa import Credentials, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters
+    from kasa.device_factory import get_protocol
+    from kasa.transports import KlapTransport, KlapTransportV2
+
+    async def verify():
+        config = DeviceConfig(
+            host='192.168.1.21', credentials=Credentials('Owner@example.test', 'test-secret'),
+            connection_type=DeviceConnectionParameters.from_values(
+                'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=login_version),
+        )
+        protocol = get_protocol(config)
+        transport = protocol._transport
+        try:
+            assert type(transport) is (KlapTransportV2 if login_version == 2 else KlapTransport)
+            local, remote = b'L' * 16, b'R' * 16
+            monkeypatch.setattr('kasa.transports.klaptransport.secrets.token_bytes', lambda length: local)
+            if login_version == 2:
+                auth = hashlib.sha256(hashlib.sha1(b'Owner@example.test').digest() + hashlib.sha1(b'test-secret').digest()).digest()
+                server_hash = hashlib.sha256(local + remote + auth).digest()
+            else:
+                auth = hashlib.md5(hashlib.md5(b'Owner@example.test').digest() + hashlib.md5(b'test-secret').digest()).digest()
+                server_hash = hashlib.sha256(local + auth).digest()
+            monkeypatch.setattr(transport._http_client, 'post', AsyncMock(return_value=(200, remote + server_hash)))
+            assert await transport.perform_handshake1() == (local, remote, auth)
+        finally:
+            await protocol.close()
+    asyncio.run(verify())
+
+
+def test_iot_connection_uses_sysinfo_to_preserve_power_strip_class(monkeypatch):
+    """Discovery calls a KLAP HS300 an IotPlug; connect must resolve IotStrip."""
+    import asyncio
+    from kasa import Credentials, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters
+    from kasa.device_factory import get_protocol
+    from kasa.iot import IotPlug, IotStrip
+
+    async def verify():
+        config = DeviceConfig(
+            host='192.168.1.21', credentials=Credentials('Owner@example.test', 'test-secret'),
+            connection_type=DeviceConnectionParameters.from_values(
+                'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=2),
+        )
+        discovered = IotPlug(config.host, config=config)
+        protocol = get_protocol(config)
+        query = AsyncMock(return_value={'system': {'get_sysinfo': {
+            'mic_type': 'IOT.SMARTPLUGSWITCH', 'model': 'HS300(US)',
+            'alias': 'Desk strip', 'mac': 'AA:BB:CC:DD:EE:FF', 'children': [{'id': 'socket1'}],
+        }}})
+        monkeypatch.setattr(protocol, 'query', query)
+        monkeypatch.setattr('kasa.device_factory.get_protocol', lambda config: protocol)
+        monkeypatch.setattr(IotStrip, 'update', AsyncMock())
+        device = await kasa_actions._ready_device(discovered)
+        try:
+            assert isinstance(device, IotStrip)
+            assert device.protocol is protocol
+            query.assert_awaited_once()
+        finally:
+            await device.disconnect()
+    asyncio.run(verify())
+
+
+def test_saved_credentials_authentication_message_does_not_assume_bad_password():
+    kasa_actions.save_settings({'username': 'Owner@example.test', 'password': 'test-secret'})
+    message = kasa_actions._authentication_message()
+    assert 'case-sensitive' in message and 'Third-Party Compatibility' in message
+    assert 'library' in message
+    assert 'test-secret' not in message

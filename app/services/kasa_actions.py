@@ -90,6 +90,29 @@ def _targets(device):
     return device.children or [device]
 
 
+async def _ready_device(device):
+    from kasa import Device
+    from kasa.protocols import IotProtocol
+
+    if isinstance(device.protocol, IotProtocol):
+        # UDP discovery labels all IOT.SMARTPLUGSWITCH devices as IotPlug.
+        # Connect queries sysinfo to distinguish strips, plugs, and switches,
+        # including IOT devices which now authenticate over KLAP v2.
+        config = device.config
+        await device.disconnect()
+        return await Device.connect(config=config)
+    await device.update()
+    return device
+
+
+def _authentication_message():
+    if not get_settings()['configured']:
+        return 'No Kasa account credentials are saved. Save the account email and password, then discover again.'
+    return ('Device authentication was not accepted. Check the account email (case-sensitive), '
+            'password, and Third-Party Compatibility in the Kasa app. Firmware or library '
+            'compatibility can also cause this error.')
+
+
 async def _discover():
     from kasa import Discover
     from kasa.exceptions import AuthenticationError
@@ -100,7 +123,7 @@ async def _discover():
         result = {'device_host': host, 'model': device.model, 'name': device.alias or '',
                   'supported': False, 'outlets': []}
         try:
-            await asyncio.wait_for(device.update(), timeout=8)
+            device = await asyncio.wait_for(_ready_device(device), timeout=8)
             if _supported(device):
                 result.update(name=device.alias or '', supported=True, outlets=[
                     {'id': target.device_id, 'name': target.alias, 'is_on': target.is_on}
@@ -109,7 +132,7 @@ async def _discover():
             else:
                 result['reason'] = 'This device does not support the available on/off actions.'
         except AuthenticationError:
-            result['reason'] = 'Authentication failed. Save the correct TP-Link account email and password, then discover again.'
+            result['reason'] = _authentication_message()
         except Exception:
             result['reason'] = 'Device responded to discovery but could not be read.'
         finally:
@@ -132,7 +155,7 @@ async def _request(host, action=None):
     if device is None:
         raise ValueError('No Kasa device responded at this address')
     try:
-        await device.update()
+        device = await _ready_device(device)
         if not _supported(device):
             raise ValueError('This device does not support the available on/off actions')
         if action:
@@ -149,7 +172,7 @@ async def _request(host, action=None):
                         for child in _targets(device)],
         }
     except AuthenticationError:
-        raise ValueError('Kasa authentication failed. Check the saved TP-Link account email and password.') from None
+        raise ValueError(_authentication_message()) from None
     finally:
         await device.disconnect()
 
