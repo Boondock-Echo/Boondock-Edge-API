@@ -3,6 +3,7 @@ import json
 import secrets
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 from config import Config
 from app.utils.sqlite_utils import connect_sqlite
@@ -18,8 +19,16 @@ class APIKeyManager:
         self.db_path = db_path or Config.get_settings_db_path()
         self.settings = get_settings_manager()
 
+    @contextmanager
     def _connect(self):
-        return connect_sqlite(self.db_path, row_factory=True)
+        connection = connect_sqlite(self.db_path, row_factory=True)
+        try:
+            with connection:
+                yield connection
+        finally:
+            # sqlite3.Connection.__exit__ commits/rolls back but does not close.
+            # Leaving a WAL connection alive can race database replacement.
+            connection.close()
 
     def create_key(self, name, scopes=None, created_by=None, expires_at=None, owner=None):
         raw_key = KEY_PREFIX + secrets.token_urlsafe(32)
