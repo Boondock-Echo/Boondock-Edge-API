@@ -379,7 +379,7 @@ def test_iot_auth_rejection_tries_legacy_read_without_credentials_or_http_port(m
         device = IotPlug(config.host, protocol=get_protocol(config))
         original = AuthenticationError('authentication rejected')
         legacy_device = Mock(spec=IotPlug, protocol=None, turn_on=AsyncMock(), turn_off=AsyncMock())
-        connect = AsyncMock(side_effect=[original, legacy_device if legacy_works else KasaException('closed')])
+        connect = AsyncMock(side_effect=[original, AuthenticationError('alternate rejected'), legacy_device if legacy_works else KasaException('closed')])
         monkeypatch.setattr(Device, 'connect', connect)
         if legacy_works:
             assert await kasa_actions._ready_device(device) is legacy_device
@@ -387,8 +387,8 @@ def test_iot_auth_rejection_tries_legacy_read_without_credentials_or_http_port(m
             with pytest.raises(AuthenticationError) as error:
                 await kasa_actions._ready_device(device)
             assert error.value is original
-        assert connect.await_count == 2
-        fallback = connect.call_args_list[1].kwargs['config']
+        assert connect.await_count == 3
+        fallback = connect.call_args_list[2].kwargs['config']
         assert fallback.host == config.host
         assert fallback.credentials is None and fallback.credentials_hash is None
         assert fallback.port_override is None and fallback.connection_type.http_port is None
@@ -419,3 +419,100 @@ def test_working_authenticated_iot_device_does_not_try_legacy(monkeypatch):
         assert await kasa_actions._ready_device(device) is connected
         connect.assert_awaited_once_with(config=config)
     asyncio.run(verify())
+
+
+@pytest.mark.parametrize('advertised_version', [1, 2])
+def test_alternate_klap_version_is_selected_only_after_successful_read(monkeypatch, advertised_version):
+    import asyncio
+    from kasa import Credentials, Device, DeviceConfig
+    from kasa.deviceconfig import DeviceConnectionParameters
+    from kasa.device_factory import get_protocol
+    from kasa.exceptions import AuthenticationError
+    from kasa.iot import IotPlug
+    async def verify():
+        config = DeviceConfig(host='192.168.1.21', credentials=Credentials('owner@example.test', 'account-secret'),
+            connection_type=DeviceConnectionParameters.from_values(
+                'IOT.SMARTPLUGSWITCH', 'KLAP', login_version=advertised_version))
+        device = IotPlug(config.host, protocol=get_protocol(config))
+        connected = Mock(spec=IotPlug, turn_on=AsyncMock(), turn_off=AsyncMock())
+        connect = AsyncMock(side_effect=[AuthenticationError('private error'), connected])
+        monkeypatch.setattr(Device, 'connect', connect)
+        attempts = []
+        assert await kasa_actions._ready_device(device, attempts) is connected
+        alternate = connect.call_args_list[1].kwargs['config']
+        assert alternate.connection_type.login_version == (1 if advertised_version == 2 else 2)
+        assert config.connection_type.login_version == advertised_version
+        assert alternate.credentials is config.credentials
+        assert [entry['status'] for entry in attempts] == ['authentication_rejected', 'read_succeeded']
+        assert 'account-secret' not in str(attempts)
+        connected.turn_on.assert_not_awaited()
+        connected.turn_off.assert_not_awaited()
+    asyncio.run(verify())
+
+
+def test_diagnostic_reports_each_protocol_failure_without_leaking_credentials(monkeypatch):
+    import asyncio
+    from kasa import Credentials, Device, DeviceConfig, Discover
+    from kasa.deviceconfig import DeviceConnectionParameters
+    from kasa.device_factory import get_protocol
+    from kasa.exceptions import AuthenticationError, KasaException
+    from kasa.iot import IotPlug
+    kasa_actions.save_settings({'username': 'owner@example.test', 'password': 'account-secret'})
+    async def verify():
+        config = DeviceConfig(host='192.168.1.21', credentials=Credentials('owner@example.test', 'account-secret'),
+            connection_type=DeviceConnectionParameters.from_values('IOT.SMARTPLUGSWITCH', 'KLAP', login_version=2))
+        protocol = get_protocol(config)
+        device = Mock(spec=IotPlug, config=config, protocol=protocol, model='HS300', alias='', disconnect=AsyncMock())
+        monkeypatch.setattr(Discover, 'discover_single', AsyncMock(return_value=device))
+        connect = AsyncMock(side_effect=[AuthenticationError('account-secret'), AuthenticationError('owner@example.test'), KasaException('closed')])
+        monkeypatch.setattr(Device, 'connect', connect)
+        try:
+            report = await kasa_actions._diagnose('192.168.1.21')
+            assert report['status'] == 'authentication_rejected'
+            assert report['credentials_configured']
+            assert [attempt['login_version'] for attempt in report['attempts']] == [2, 1, None]
+            assert [attempt['encryption'] for attempt in report['attempts']] == ['KLAP', 'KLAP', 'XOR']
+            assert [attempt['status'] for attempt in report['attempts']] == ['authentication_rejected', 'authentication_rejected', 'read_failed']
+            assert 'account-secret' not in str(report) and 'owner@example.test' not in str(report)
+            device.turn_on.assert_not_called()
+            device.turn_off.assert_not_called()
+        finally:
+            await protocol.close()
+    asyncio.run(verify())
+
+
+def test_diagnostic_reads_six_outlets_and_firmware_without_switching(monkeypatch):
+    from kasa import DeviceConfig, Discover
+    from kasa.iot import IotStrip
+    config = DeviceConfig(host='192.168.1.96')
+    device = Mock(spec=IotStrip, config=config, protocol=None, model='HS300', alias='Strip',
+                  children=[SimpleNamespace(device_id=f'socket{i}') for i in range(6)],
+                  device_info=SimpleNamespace(hardware_version='2.0', firmware_version='1.0.12'),
+                  update=AsyncMock(), disconnect=AsyncMock(), turn_on=AsyncMock(), turn_off=AsyncMock())
+    monkeypatch.setattr(Discover, 'discover_single', AsyncMock(return_value=device))
+    report = kasa_actions.diagnose('192.168.1.96')
+    assert report['status'] == 'read_succeeded' and report['supported']
+    assert report['outlet_count'] == 6 and report['firmware_version'] == '1.0.12'
+    assert report['selected_connection']['encryption'] == 'XOR'
+    device.turn_on.assert_not_awaited()
+    device.turn_off.assert_not_awaited()
+    device.disconnect.assert_awaited_once()
+
+
+def test_diagnostic_route_is_admin_only_and_validates_input(admin_auth, monkeypatch):
+    from flask import Flask
+    from app.routes.keyword_actions_routes import keyword_actions_bp
+    from app.services.settings_manager import get_settings_manager
+    app = Flask(__name__)
+    app.register_blueprint(keyword_actions_bp, url_prefix='/api')
+    client = app.test_client()
+    path = '/api/keyword-actions/kasa/diagnose'
+    assert client.post(path, json={'device_host': '192.168.1.21'}).status_code == 401
+    manager = get_settings_manager()
+    manager.save_user('member@example.test', {'name': 'Member', 'role': 'member', 'password': 'unused', 'groups': []})
+    token, _ = manager.issue_credential('user', 'member@example.test', None)
+    assert client.post(path, json={'device_host': '192.168.1.21'}, headers={'Authorization': f'Bearer {token}'}).status_code == 403
+    monkeypatch.setattr(kasa_actions, 'diagnose', lambda host: {'device_host': host, 'attempts': []})
+    assert client.post(path, headers=admin_auth, json={'device_host': '192.168.1.21'}).json['attempts'] == []
+    assert client.post(path, headers=admin_auth, json={'device_host': '192.168.1.21', 'command': 'turn_on'}).status_code == 400
+    assert client.post(path, headers=admin_auth, json={}).status_code == 400
