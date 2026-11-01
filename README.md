@@ -357,6 +357,25 @@ switches an outlet. If the device no longer supports legacy access, the original
 authentication error remains; the fallback cannot repair account or firmware
 problems on devices requiring authentication.
 
+Firmware upgrades are a last resort, not a requirement for supported local
+protocols. IOT KLAP devices first use their advertised handshake version. After
+an authentication rejection the API tries the other KLAP version (v1/v2), then
+the credential-free legacy protocol. Each alternative must pass a device read
+before it is used. Successful advertised connections are kept without probing
+alternatives. The version is selected per device; no firmware-number rule changes
+the behavior of every device on the network.
+
+Use **Diagnose connection** on the Actions screen to investigate a device. Failed
+discovery entries can be selected for diagnosis; they still cannot be switched
+without a readable target. The report shows the library version, advertised and
+selected protocols, outcomes of each attempted protocol, target count, and
+hardware/firmware versions when readable. It contains no account email, password,
+credential hashes, raw vendor errors, or authentication challenge data. Diagnosis
+does not switch outlets, alter saved actions, or update firmware. Admin-only
+`POST /api/keyword-actions/kasa/diagnose` accepts `device_host` and returns the
+same read-only report. An unsuccessful diagnostic provides evidence for the next
+compatibility change; it does not establish that the device needs an upgrade.
+
 On the Actions screen, choose **Kasa device** and click **Discover Kasa devices**.
 Choose a discovered device by name, model, and IP address, or enter its IPv4
 address manually and click **Read outlets**. For devices requiring authentication,

@@ -90,25 +90,67 @@ def _targets(device):
     return device.children or [device]
 
 
-async def _ready_device(device):
+def _connection_summary(config):
+    connection = config.connection_type
+    return {
+        'family': connection.device_family.value,
+        'encryption': connection.encryption_type.value,
+        'login_version': connection.login_version,
+    }
+
+
+def _failure_status(error):
+    from kasa.exceptions import AuthenticationError, TimeoutError as KasaTimeoutError
+    if isinstance(error, AuthenticationError):
+        return 'authentication_rejected'
+    if isinstance(error, (TimeoutError, KasaTimeoutError)):
+        return 'timeout'
+    return 'read_failed'
+
+
+async def _ready_device(device, attempts=None):
+    from dataclasses import replace
     from kasa import Device, DeviceConfig
     from kasa.deviceconfig import DeviceConnectionParameters, DeviceEncryptionType
     from kasa.exceptions import AuthenticationError, KasaException
     from kasa.protocols import IotProtocol
     from kasa.transports import XorTransport
 
+    diagnostic = attempts is not None
+    attempts = attempts if diagnostic else []
+
+    async def connect(config, timeout=None):
+        attempt = {**_connection_summary(config), 'status': 'reading'}
+        attempts.append(attempt)
+        try:
+            request = Device.connect(config=config)
+            connected = await asyncio.wait_for(request, timeout) if timeout else await request
+        except asyncio.CancelledError:
+            attempt['status'] = 'timeout'
+            raise
+        except (KasaException, TimeoutError) as error:
+            attempt['status'] = _failure_status(error)
+            raise
+        attempt['status'] = 'read_succeeded'
+        return connected
+
     if isinstance(device.protocol, IotProtocol) and not isinstance(device.protocol._transport, XorTransport):
-        # UDP discovery labels all IOT.SMARTPLUGSWITCH devices as IotPlug.
-        # Connect queries sysinfo to distinguish strips, plugs, and switches,
-        # including IOT devices which now authenticate over KLAP v2.
+        # Sysinfo selects IotStrip for HS300/KP200 instead of discovery's IotPlug.
         config = device.config
         await device.disconnect()
         try:
-            return await Device.connect(config=config)
+            return await connect(config)
         except AuthenticationError as auth_error:
-            # Some IOT devices advertise authenticated discovery while still
-            # accepting their legacy local protocol. Verify that protocol with
-            # a read; never issue a switching command while choosing a path.
+            # Firmware generations do not always agree on the advertised KLAP
+            # login version. Only a successful read selects an alternate path.
+            if config.connection_type.encryption_type is DeviceEncryptionType.Klap:
+                version = config.connection_type.login_version or 1
+                alternate = replace(config, connection_type=replace(
+                    config.connection_type, login_version=1 if version >= 2 else 2))
+                try:
+                    return await connect(alternate, timeout=2.5)
+                except (KasaException, TimeoutError):
+                    pass
             legacy = DeviceConfig(
                 host=config.host, timeout=2,
                 connection_type=DeviceConnectionParameters(
@@ -117,13 +159,23 @@ async def _ready_device(device):
                 ),
             )
             try:
-                return await asyncio.wait_for(Device.connect(config=legacy), timeout=3)
+                return await connect(legacy, timeout=3)
             except (KasaException, TimeoutError):
                 raise auth_error from None
-    # Discovery already classifies legacy XOR devices correctly. Preserve that
-    # instance and its no-authentication path even when an account is saved.
-    await device.update()
+    # Legacy discovery is already classified correctly; keep that connection.
+    attempt = {**_connection_summary(device.config), 'status': 'reading'} if diagnostic else {'status': 'reading'}
+    attempts.append(attempt)
+    try:
+        await device.update()
+    except asyncio.CancelledError:
+        attempt['status'] = 'timeout'
+        raise
+    except Exception as error:
+        attempt['status'] = _failure_status(error)
+        raise
+    attempt['status'] = 'read_succeeded'
     return device
+
 
 
 def _authentication_message():
@@ -205,3 +257,43 @@ def read_outlets(host):
 def execute(action):
     config = validate_config(action)
     return asyncio.run(asyncio.wait_for(_request(config['device_host'], config), timeout=15))
+
+
+async def _diagnose(host):
+    from importlib.metadata import version
+    from kasa import Discover
+    from kasa.exceptions import AuthenticationError, KasaException
+
+    report = {
+        'device_host': host, 'library_version': version('python-kasa'),
+        'credentials_configured': get_settings()['configured'], 'attempts': [],
+        'supported': False, 'outlet_count': 0,
+    }
+    device = None
+    try:
+        device = await Discover.discover_single(host, discovery_timeout=3, credentials=_credentials())
+        if device is None:
+            report['status'] = 'not_discovered'
+            return report
+        report.update(model=device.model, advertised_connection=_connection_summary(device.config))
+        device = await asyncio.wait_for(_ready_device(device, report['attempts']), timeout=10)
+        report.update(status='read_succeeded', supported=_supported(device),
+                      selected_connection=_connection_summary(device.config),
+                      outlet_count=len(_targets(device)))
+        try:
+            info = device.device_info
+            report.update(hardware_version=info.hardware_version, firmware_version=info.firmware_version)
+        except (AttributeError, KeyError, KasaException):
+            pass  # Some firmware does not provide version metadata.
+    except AuthenticationError:
+        report.update(status='authentication_rejected', message=_authentication_message())
+    except Exception as error:
+        report['status'] = _failure_status(error)
+    finally:
+        if device is not None:
+            await device.disconnect()
+    return report
+
+
+def diagnose(host):
+    return asyncio.run(asyncio.wait_for(_diagnose(validate_host(host)), timeout=15))

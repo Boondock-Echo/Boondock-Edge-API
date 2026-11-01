@@ -160,3 +160,17 @@ def discover_kasa():
         return jsonify({'error': str(error)}), 400
     except Exception:
         return jsonify({'error': 'Kasa discovery failed. Check local network and UDP broadcast access from the API host.'}), 502
+
+
+@keyword_actions_bp.route('/keyword-actions/kasa/diagnose', methods=['POST'])
+@require_admin
+def diagnose_kasa():
+    try:
+        data = _body()
+        if set(data) != {'device_host'}:
+            raise ValueError('Provide the device_host only')
+        return jsonify(service.kasa_actions.diagnose(data['device_host']))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except Exception:
+        return jsonify({'error': 'Device diagnostic could not complete. Check API host network access.'}), 502
