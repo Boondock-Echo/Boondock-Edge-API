@@ -1,11 +1,11 @@
 # app/routes/react.py
-from config import DATA_ROOT
+from config import CODE_ROOT
 from flask import Blueprint, abort, send_from_directory, send_file
 
 react_bp = Blueprint('react', __name__)
 
 # Path to React build directory
-REACT_DIR = DATA_ROOT / 'dashboard'
+REACT_DIR = CODE_ROOT.parent / 'dashboard'
 
 # TO-DO Conflicts with another route in __init__.py
 @react_bp.route('/static/<path:filename>')
