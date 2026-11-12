@@ -22,7 +22,7 @@ import uuid
 from config import Config, DATA_ROOT
 from app.utils.sqlite_utils import connect_sqlite
 from .settings_manager import get_settings_manager
-from . import kasa_actions
+from . import kasa_actions, portal_alerts
 
 logger = logging.getLogger(__name__)
 _config_lock = threading.RLock()
@@ -139,7 +139,7 @@ def get_actions():
 
 
 def save_action(data, action_id=None):
-    fields = {'name', 'kind', 'autoplay', 'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format', 'device_host', 'outlet_id', 'command'}
+    fields = {'name', 'kind', 'delivery', 'autoplay', 'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format', 'device_host', 'outlet_id', 'command'}
     if not isinstance(data, dict) or set(data) - fields:
         raise ValueError('Unknown action fields')
     with _config_lock:
@@ -153,22 +153,36 @@ def save_action(data, action_id=None):
         if not action['name']:
             raise ValueError('Action name is required')
         if action.get('kind') == 'email':
-            if not get_email_settings()['configured']:
-                raise ValueError('Set up email routing before creating an email action')
-            action['from_email'] = _address(action.get('from_email', ''), 'from_email')
-            action['from_name'] = _text(action.get('from_name', 'Boondock'), 'from_name', 100)
-            if any(character in action['from_name'] for character in '\r\n'):
-                raise ValueError('from_name must be a single line')
-            action['reply_to'] = _address(action['reply_to'], 'reply_to') if action.get('reply_to') else ''
-            for key in ('to', 'cc', 'bcc'):
-                action[key] = _addresses(action.get(key, []), key)
-            if not action['to']:
-                raise ValueError('At least one To recipient is required')
-            action['subject'] = validate_template(action.get('subject', ''), 'subject', subject=True)
-            action['body'] = validate_template(action.get('body', ''), 'body')
-            if action.get('body_format', 'text') not in ('text', 'html'):
-                raise ValueError('Email format must be text or html')
-            action['body_format'] = action.get('body_format', 'text')
+            action['delivery'] = action.get('delivery', 'smtp')
+            if action['delivery'] not in ('smtp', 'portal'):
+                raise ValueError('Email delivery must be smtp or portal')
+            if action['delivery'] == 'portal':
+                # The portal sends from a fixed template, so no SMTP routing or
+                # message fields are needed; only the recipients.
+                if not portal_alerts.portal_connected():
+                    raise ValueError('Connect this Edge to the portal before using portal email')
+                action['to'] = _addresses(action.get('to', []), 'to')
+                if not action['to']:
+                    raise ValueError('At least one To recipient is required')
+                if len(action['to']) > portal_alerts.MAX_PORTAL_RECIPIENTS:
+                    raise ValueError(f'Portal email allows at most {portal_alerts.MAX_PORTAL_RECIPIENTS} recipients')
+            else:
+                if not get_email_settings()['configured']:
+                    raise ValueError('Set up email routing before creating an email action')
+                action['from_email'] = _address(action.get('from_email', ''), 'from_email')
+                action['from_name'] = _text(action.get('from_name', 'Boondock'), 'from_name', 100)
+                if any(character in action['from_name'] for character in '\r\n'):
+                    raise ValueError('from_name must be a single line')
+                action['reply_to'] = _address(action['reply_to'], 'reply_to') if action.get('reply_to') else ''
+                for key in ('to', 'cc', 'bcc'):
+                    action[key] = _addresses(action.get(key, []), key)
+                if not action['to']:
+                    raise ValueError('At least one To recipient is required')
+                action['subject'] = validate_template(action.get('subject', ''), 'subject', subject=True)
+                action['body'] = validate_template(action.get('body', ''), 'body')
+                if action.get('body_format', 'text') not in ('text', 'html'):
+                    raise ValueError('Email format must be text or html')
+                action['body_format'] = action.get('body_format', 'text')
         elif action.get('kind') == 'popup':
             action['autoplay'] = _boolean(action.get('autoplay', True), 'autoplay')
         elif action.get('kind') == 'kasa':
@@ -178,7 +192,7 @@ def save_action(data, action_id=None):
         # Keep only configuration relevant to the selected action type.
         config_fields = {
             'popup': {'autoplay'},
-            'email': {'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format'},
+            'email': {'delivery', 'from_email', 'from_name', 'reply_to', 'to', 'cc', 'bcc', 'subject', 'body', 'body_format'},
             'kasa': {'device_host', 'outlet_id', 'command'},
         }[action['kind']]
         action = {key: value for key, value in action.items() if key in config_fields | {'id', 'name', 'kind'}}
@@ -274,6 +288,9 @@ def render_email(action, context, settings):
 
 
 def send_email(action, context, settings=None):
+    if action.get('delivery') == 'portal':
+        portal_alerts.send_keyword_alert(action['to'], context)
+        return
     settings = settings or get_email_settings()
     if not settings['configured']:
         raise ValueError('Email routing is not configured')
@@ -308,16 +325,24 @@ def send_email(action, context, settings=None):
 def process_email_delivery(database=None, now=None, *, kind='email'):
     """Claim and attempt one due delivery. A lease permits crash recovery."""
     settings = get_email_settings()
-    if kind == 'email' and not settings['configured']:
+    smtp_ready = settings['configured']
+    portal_ready = portal_alerts.portal_connected()
+    if kind == 'email' and not (smtp_ready or portal_ready):
         return False
+    # Leave deliveries whose route is unavailable queued instead of burning attempts.
+    route_filter = ''
+    if kind == 'email' and not smtp_ready:
+        route_filter = " AND COALESCE(json_extract(payload, '$.action.delivery'), 'smtp')='portal'"
+    elif kind == 'email' and not portal_ready:
+        route_filter = " AND COALESCE(json_extract(payload, '$.action.delivery'), 'smtp')!='portal'"
     now = int(time.time()) if now is None else now
     connection = connect_sqlite(database or Config.get_recordings_db_path(), row_factory=True)
     try:
         connection.execute('BEGIN IMMEDIATE')
         row = connection.execute(
             '''SELECT * FROM keyword_action_deliveries WHERE kind=? AND
-               ((state='pending' AND next_attempt_at<=?) OR (state='sending' AND lease_until<=?))
-               ORDER BY id LIMIT 1''', (kind, now, now),
+               ((state='pending' AND next_attempt_at<=?) OR (state='sending' AND lease_until<=?))'''
+            + route_filter + ' ORDER BY id LIMIT 1', (kind, now, now),
         ).fetchone()
         if not row:
             connection.rollback()
@@ -349,7 +374,7 @@ def process_email_delivery(database=None, now=None, *, kind='email'):
                 # Keep server replies, credentials, and message content out of errors.
                 connection.execute(
                     '''UPDATE keyword_action_deliveries SET state=?, next_attempt_at=?, lease_until=0, last_error=? WHERE id=?''',
-                    ('failed' if attempts >= 3 or isinstance(error, PartialEmailDeliveryError) else 'pending', now + 30 * 2 ** (attempts - 1),
+                    ('failed' if attempts >= 3 or isinstance(error, (PartialEmailDeliveryError, portal_alerts.PortalAlertPartialError)) else 'pending', now + 30 * 2 ** (attempts - 1),
                      type(error).__name__, row['id']),
                 )
             else:
