@@ -104,6 +104,7 @@ def create_app(config_class=Config):
     from app.routes.release_package_routes import release_package_bp
     from app.routes.recorder_routes import recorders_bp
     from app.routes.external_api_routes import external_api_bp
+    from app.routes.boondock_cloud_routes import boondock_cloud_bp
 
     # Register all blueprints with /api prefix
     # TO-DO non-standard channel_bp routes
@@ -135,6 +136,7 @@ def create_app(config_class=Config):
     app.register_blueprint(release_notes_bp, url_prefix='/api')
     app.register_blueprint(release_package_bp, url_prefix='/api')
     app.register_blueprint(external_api_bp, url_prefix='/api')
+    app.register_blueprint(boondock_cloud_bp, url_prefix='/api')
     app.register_blueprint(recorders_bp, url_prefix='/api/recorders')
     app.register_blueprint(logs_bp, url_prefix='/api/')
     app.register_blueprint(radio_bp, url_prefix='/api/radio')
@@ -175,6 +177,14 @@ def create_app(config_class=Config):
         app.logger.info("Settings database checked/initialized on app startup")
     except Exception as e:
         app.logger.warning(f"Settings database init check on startup: {e}")
+
+    # Resume portal heartbeats when this Edge is already connected.
+    if not _reloader_active or _werkzeug_main == 'true':
+        try:
+            from app.routes.boondock_cloud_routes import ensure_heartbeat_running
+            ensure_heartbeat_running()
+        except Exception as e:
+            app.logger.warning(f"Could not start Boondock Cloud heartbeat: {e}")
 
     # Provision default hotspot on first boot when Wi-Fi AP mode is supported.
     if not _reloader_active or _werkzeug_main == 'true':
